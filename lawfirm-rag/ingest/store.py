@@ -1,88 +1,69 @@
 from __future__ import annotations
 
-from langchain_community.vectorstores.supabase import SupabaseVectorStore
-from langchain_core.documents import Document
+import json
+import logging
+from datetime import datetime, timezone
+from typing import Any
+
+from ingest.embed import chunk_text, embed_chunks
+from ingest.extract import extract_text
+from search.service_client import make_service_client
+
+logger = logging.getLogger(__name__)
 
 
-def insert_documents(client, embeddings, docs: list[Document], file_id: str, file_title: str, file_url: str) -> None:
-    store = SupabaseVectorStore(
-        client=client,
-        embedding=embeddings,
-        table_name="documents",
-        query_name="match_documents",
-    )
-    vectors = embeddings.embed_documents([d.page_content for d in docs])
-    payloads = [
+async def upsert_file(
+    file_id: str,
+    file_title: str,
+    file_url: str,
+    mime_type: str,
+    raw_bytes: bytes,
+    access_level: int = 1,
+    matter_id: str = "",
+) -> dict[str, Any]:
+    """
+    Full ingest pipeline for one file:
+      1. Extract text
+      2. Chunk + embed
+      3. Delete old rows for this file_id (idempotent re-ingest)
+      4. Insert new document rows
+      5. Upsert document_metadata row
+    Uses the SERVICE ROLE client — bypasses RLS intentionally for writes.
+    """
+    client = make_service_client()
+
+    text = extract_text(raw_bytes, mime_type)
+    chunks = chunk_text(text)
+    if not chunks:
+        logger.warning("No chunks produced for file_id=%s", file_id)
+        return {"file_id": file_id, "chunks": 0}
+
+    embeddings = embed_chunks(chunks)
+
+    # Delete old vectors for this file (idempotent re-ingest)
+    client.rpc("delete_documents_by_file_id", {"p_file_id": file_id}).execute()
+
+    # Insert new document rows
+    rows = [
         {
-            "content": d.page_content,
-            "metadata": {
-                "file_id": file_id,
-                "file_title": file_title,
-                "url": file_url,
-                **(d.metadata or {}),
-            },
+            "content":      chunk,
+            "embedding":    embedding,
+            "metadata":     {"file_id": file_id, "file_title": file_title, "url": file_url},
+            "access_level": access_level,
+            "matter_id":    matter_id,
         }
-        for d in docs
+        for chunk, embedding in zip(chunks, embeddings)
     ]
-    if vectors and payloads and len(vectors[0]) > 0:
-        store.add_embeddings(zip(vectors, payloads))
-    else:
-        store.add_documents(docs)
+    client.table("documents").insert(rows).execute()
 
+    # Upsert metadata record
+    client.table("document_metadata").upsert({
+        "file_id":     file_id,
+        "file_title":  file_title,
+        "url":         file_url,
+        "mime_type":   mime_type,
+        "ingested_at": datetime.now(timezone.utc).isoformat(),
+    }, on_conflict="file_id").execute()
 
-def build_documents(text: str, metadata: dict) -> list[Document]:
-    from langchain_text_splitters import CharacterTextSplitter
-    from config import settings
-
-    splitter = CharacterTextSplitter(
-        chunk_size=settings.chunk_size,
-        chunk_overlap=settings.chunk_overlap,
-    )
-    chunks = splitter.split_text(text or "")
-    return [Document(page_content=c, metadata=metadata) for c in chunks]
-
-
-def delete_old_rows_for_file(client, file_id: str) -> None:
-    try:
-        client.rpc(
-            "delete_documents_by_file_id",
-            {"p_file_id": file_id},
-        ).execute()
-    except Exception:
-        try:
-            table = client.table("documents")
-            table.delete().contains("metadata", {"file_id": file_id}).execute()
-        except Exception:
-            pass
-
-
-def insert_metadata(client, payload: dict) -> None:
-    client.table("document_metadata").insert(payload).execute()
-
-
-def delete_orphan_documents(client, ids: list[int]) -> None:
-    if not ids:
-        return
-    try:
-        client.table("documents").delete().in_("id", ids).execute()
-    except Exception:
-        pass
-
-
-def get_all_documents(client) -> list[dict]:
-    res = client.table("documents").select("*").execute()
-    return list(getattr(res, "data", []) or [])
-
-
-def list_metadata(client) -> list[dict]:
-    res = client.table("document_metadata").select("*").execute()
-    return list(getattr(res, "data", []) or [])
-
-
-def delete_metadata(client, ids: list[str]) -> None:
-    if not ids:
-        return
-    try:
-        client.table("document_metadata").delete().in_("id", ids).execute()
-    except Exception:
-        pass
+    logger.info("Ingested file_id=%s chunks=%d", file_id, len(chunks))
+    return {"file_id": file_id, "chunks": len(chunks)}

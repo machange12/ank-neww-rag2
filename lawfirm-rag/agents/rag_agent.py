@@ -1,162 +1,128 @@
 from __future__ import annotations
 
-from langchain.agents import AgentExecutor, create_openai_tools_agent
-from langchain.memory import ConversationBufferMemory
+import logging
+from typing import Any
+
+from langchain.agents import AgentExecutor, create_openai_functions_agent
+from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain.tools.retriever import create_retriever_tool
 from langchain_cohere import CohereRerank
-from langchain_core.messages import AIMessage, HumanMessage
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_postgres import PostgresChatMessageHistory
-from langchain_text_splitters import CharacterTextSplitter
-from langchain_community.vectorstores.supabase import SupabaseVectorStore
+from langchain.memory import ConversationBufferWindowMemory
+from langchain_community.vectorstores import SupabaseVectorStore
 
 from config import settings
-from search.supabase_client import make_user_client
 
-SYMBOLIC_QUESTION = "Respond with `42`"
+logger = logging.getLogger(__name__)
+
+RAG_SYSTEM_TEMPLATE = """{system_prefix}
+
+You are a secure legal knowledge assistant for Anjarwalla & Khanna Advocates.
+
+CORE BEHAVIOUR RULES:
+1. ALWAYS call the search tool for any legal question — never answer from general knowledge alone.
+2. For greetings or small talk: respond briefly, do NOT reference the knowledge base.
+3. For legal questions: search first, cite sources with [Title | Date | Matter ID].
+4. If insufficient context: "I could not find an answer in the firm's document repository."
+5. Never speculate beyond retrieved content.
+"""
 
 
-def build_embeddings() -> OpenAIEmbeddings:
-    return OpenAIEmbeddings(
+def _make_vector_store(user_client: Any) -> SupabaseVectorStore:
+    embeddings = OpenAIEmbeddings(
         model=settings.embedding_model,
         openai_api_key=settings.openai_api_key,
     )
-
-
-def build_text_splitter() -> CharacterTextSplitter:
-    return CharacterTextSplitter(
-        chunk_size=settings.chunk_size,
-        chunk_overlap=settings.chunk_overlap,
+    return SupabaseVectorStore(
+        client=user_client,
+        embedding=embeddings,
+        table_name="documents",
+        query_name="match_documents_rls",  # security invoker — RLS applies
     )
 
 
-def build_chat_model() -> ChatOpenAI:
-    return ChatOpenAI(
+def _make_retriever(user_client: Any) -> Any:
+    store = _make_vector_store(user_client)
+    base_retriever = store.as_retriever(search_kwargs={"k": settings.retrieve_top_k})
+
+    if settings.cohere_api_key:
+        compressor = CohereRerank(
+            cohere_api_key=settings.cohere_api_key,
+            top_n=5,
+            model="rerank-english-v3.0",
+        )
+        from langchain.retrievers import ContextualCompressionRetriever
+        return ContextualCompressionRetriever(
+            base_compressor=compressor,
+            base_retriever=base_retriever,
+        )
+
+    return base_retriever
+
+
+def run_chat(
+    session_id: str,
+    system_prefix: str,
+    chat_input: str,
+    user_client: Any,
+) -> str:
+    """
+    Run one turn of the RAG chat agent.
+    - Retrieves via match_documents_rls (security invoker, RLS-gated).
+    - Reranks with Cohere if COHERE_API_KEY is set.
+    - Stores conversation in Postgres chat_memory table.
+    """
+    llm = ChatOpenAI(
         model=settings.chat_model,
-        openai_api_key=settings.openai_api_key,
-        max_tokens=settings.chat_max_tokens,
         temperature=0,
+        max_tokens=settings.chat_max_tokens,
+        openai_api_key=settings.openai_api_key,
     )
 
+    retriever = _make_retriever(user_client)
+    search_tool = create_retriever_tool(
+        retriever,
+        name="search_law_firm_documents",
+        description=(
+            "Search the law firm's secure document knowledge base. "
+            "Use this for any legal question, case research, or document lookup. "
+            "Input: the user's search query."
+        ),
+    )
 
-def build_history(session_id: str) -> PostgresChatMessageHistory:
-    return PostgresChatMessageHistory(
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", RAG_SYSTEM_TEMPLATE),
+        MessagesPlaceholder(variable_name="chat_history"),
+        ("human", "{input}"),
+        MessagesPlaceholder(variable_name="agent_scratchpad"),
+    ])
+
+    # Postgres-backed chat memory
+    history = PostgresChatMessageHistory(
         connection_string=settings.postgres_dsn,
         session_id=session_id,
         table_name="chat_memory",
     )
-
-
-def build_memory(history: PostgresChatMessageHistory) -> ConversationBufferMemory:
-    return ConversationBufferMemory(
+    memory = ConversationBufferWindowMemory(
+        memory_key="chat_history",
         chat_memory=history,
         return_messages=True,
-        memory_key="chat_history",
         k=settings.context_window,
     )
 
-
-def build_vector_store(client, embeddings: OpenAIEmbeddings) -> SupabaseVectorStore:
-    return SupabaseVectorStore(
-        client=client,
-        embedding=embeddings,
-        table_name="documents",
-        query_name="match_documents_rls",
+    agent = create_openai_functions_agent(llm=llm, tools=[search_tool], prompt=prompt)
+    executor = AgentExecutor(
+        agent=agent,
+        tools=[search_tool],
+        memory=memory,
+        verbose=False,
+        handle_parsing_errors=True,
     )
 
+    result = executor.invoke({
+        "input": chat_input,
+        "system_prefix": system_prefix,
+    })
 
-def build_reranker() -> CohereRerank:
-    return CohereRerank(cohere_api_key=settings.cohere_api_key)
-
-
-def build_agent_executor(system_prefix: str) -> AgentExecutor:
-    llm = build_chat_model()
-    prompt = ChatPromptTemplate.from_messages(
-        [
-            ("system", system_prefix + "\n" + _agent_persona()),
-            MessagesPlaceholder("chat_history", optional=True),
-            ("human", "{input}"),
-            MessagesPlaceholder("agent_scratchpad"),
-        ]
-    )
-    model = prompt | llm
-    return model
-
-
-def _agent_persona() -> str:
-    return (
-        "You are a secure legal knowledge assistant for Anjarwalla & Khanna Advocates, "
-        "East Africa's leading law firm.\n\n"
-        "Your primary role is to answer queries using the firm's document knowledge base.\n\n"
-        "CORE BEHAVIOR RULES:\n"
-        "1. ALWAYS call the search tool for any legal question — never answer from general knowledge alone.\n"
-        "2. For greetings or small talk: respond briefly, do NOT reference the knowledge base.\n"
-        "3. For legal questions: search first, cite sources.\n\n"
-        "RESPONSE FORMAT:\n"
-        "- Direct answer from retrieved context only\n"
-        "- Sources section with: [Title | Date | Matter ID]\n"
-        '- If insufficient context: "I could not find an answer in the firm\'s document repository."\n'
-        "- Never speculate beyond retrieved documents."
-    )
-
-
-def run_chat(session_id: str, system_prefix: str, chat_input: str, user_client) -> str:
-    history = build_history(session_id)
-    messages = history.get_messages()
-    chat_history = [m for m in messages if isinstance(m, (HumanMessage, AIMessage))][
-        -settings.context_window * 2 :
-    ]
-
-    embeddings = build_embeddings()
-    vs = build_vector_store(user_client, embeddings)
-    retriever = vs.as_retriever(
-        search_kwargs={"k": settings.retrieve_top_k, "filter": {}},
-    )
-
-    model = build_chat_model()
-
-    prompt_msgs = [
-        ("system", system_prefix + "\n" + _agent_persona()),
-    ]
-    for msg in chat_history:
-        if isinstance(msg, HumanMessage):
-            prompt_msgs.append(("human", msg.content))
-        else:
-            prompt_msgs.append(("ai", msg.content))
-    prompt_msgs.append(("human", "{input}"))
-
-    from langchain_core.documents import Document as LCDocument
-    from langchain_core.prompts import ChatPromptTemplate as CPT
-
-    reranker = build_reranker()
-
-    def retrieve_and_answer(input_text: str) -> str:
-        docs = retriever.invoke(input_text)
-        try:
-            docs = reranker.compress_documents(docs, input_text)
-        except Exception:
-            pass
-        context = "\n\n".join(_fmt(d) for d in docs[:5])
-        messages_local = list(prompt_msgs[:-1])
-        messages_local.append(
-            (
-                "human",
-                f"Context from knowledge base:\n{context}\n\nQuestion: {input_text}",
-            )
-        )
-        prompt = CPT.from_messages(messages_local)
-        resp = model.invoke(prompt.format_prompt(input=input_text).to_messages())
-        text = resp.content if isinstance(resp.content, str) else str(resp.content)
-        history.add_user_message(input_text)
-        history.add_ai_message(text)
-        return text
-
-    return retrieve_and_answer(chat_input)
-
-
-def _fmt(d: LCDocument) -> str:
-    meta = d.metadata or {}
-    title = meta.get("file_title") or meta.get("title") or "(untitled)"
-    date = meta.get("date") or meta.get("created_at") or "-"
-    matter = meta.get("matter_id") or "-"
-    return f"[{title} | {date} | {matter}]\n{d.page_content}"
+    return result.get("output") or ""
