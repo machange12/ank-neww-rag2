@@ -1,14 +1,19 @@
 from __future__ import annotations
 
-import datetime as dt
+from datetime import datetime, timezone
+from typing import Any
 
 
-def build_session(ctx: dict, rbac: dict) -> dict:
-    session_id = f"{ctx.get('user_id', 'anon')}__{ctx.get('session_id', '')}"
+def build_session(ctx: dict[str, Any], rbac: dict[str, Any]) -> dict[str, Any]:
+    """
+    Mirror of n8n Session_Manager node.
+    Returns a session dict; session_id is used as the Postgres chat memory key.
+    """
+    session_id = f"{ctx['user_id']}__{ctx['session_id']}"
     return {
-        "session_id": session_id,
-        "user_id": ctx.get("user_id"),
-        "role": rbac.get("role"),
-        "started_at": dt.datetime.utcnow().isoformat() + "Z",
-        "access_level": rbac.get("perms", {}).get("level", 1),
+        "session_id":   session_id,
+        "user_id":      ctx["user_id"],
+        "role":         rbac["role"],
+        "started_at":   datetime.now(timezone.utc).isoformat(),
+        "access_level": rbac["perms"]["level"],
     }

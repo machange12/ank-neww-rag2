@@ -1,76 +1,59 @@
 from __future__ import annotations
 
-from google.oauth2.credentials import Credentials
+import logging
+from typing import Any
 
-from config import settings
-from ingest.downloader import build_drive_service, list_folder_meta_for_cleanup
-from ingest.store import (
-    delete_metadata,
-    delete_orphan_documents,
-    get_all_documents,
-    list_metadata,
-)
+from ingest.downloader import list_folder_files
+from search.service_client import make_service_client
+
+logger = logging.getLogger(__name__)
 
 
-def _drive_creds() -> Credentials:
-    return Credentials(
-        token=None,
-        refresh_token=settings.google_refresh_token,
-        token_uri="https://oauth2.googleapis.com/token",
-        client_id=settings.google_oauth_client_id,
-        client_secret=settings.google_oauth_client_secret,
-        scopes=["https://www.googleapis.com/auth/drive.readonly"],
+async def run_cleanup() -> dict[str, Any]:
+    """
+    Nightly orphan detection — mirrors the n8n Schedule Trigger cleanup branch.
+    Removes document rows and metadata rows whose source file no longer exists in Drive.
+    """
+    logger.info("Starting nightly orphan cleanup...")
+    client = make_service_client()
+
+    # Live file IDs in Drive
+    drive_files = list_folder_files()
+    drive_ids: set[str] = {f["id"] for f in drive_files}
+
+    results: dict[str, Any] = {
+        "drive_files": len(drive_ids),
+        "documents_deleted": 0,
+        "metadata_deleted": 0,
+        "errors": [],
+    }
+
+    # ── Orphan vectors ────────────────────────────────────────────
+    doc_rows = client.table("documents").select("id, metadata").execute().data or []
+    for row in doc_rows:
+        meta = row.get("metadata") or {}
+        file_id = meta.get("file_id")
+        if file_id and file_id not in drive_ids:
+            try:
+                client.table("documents").delete().eq("id", row["id"]).execute()
+                results["documents_deleted"] += 1
+            except Exception as exc:  # noqa: BLE001
+                results["errors"].append({"id": row["id"], "error": str(exc)})
+
+    # ── Orphan metadata ───────────────────────────────────────────
+    meta_rows = client.table("document_metadata").select("id, file_id").execute().data or []
+    for row in meta_rows:
+        if row.get("file_id") and row["file_id"] not in drive_ids:
+            try:
+                client.table("document_metadata").delete().eq("id", row["id"]).execute()
+                results["metadata_deleted"] += 1
+            except Exception as exc:  # noqa: BLE001
+                results["errors"].append({"id": row["id"], "error": str(exc)})
+
+    logger.info(
+        "Cleanup done: %d vectors deleted, %d metadata deleted, %d errors",
+        results["documents_deleted"],
+        results["metadata_deleted"],
+        len(results["errors"]),
     )
-
-
-def _find_document_orphans() -> list[dict]:
-    from search.service_client import make_service_client
-
-    client = make_service_client()
-    drive_service = build_drive_service(_drive_creds())
-    drive_files = list_folder_meta_for_cleanup(drive_service, settings.drive_folder_id)
-    drive_ids = {f["id"] for f in drive_files}
-
-    rows = get_all_documents(client)
-    orphans: list[dict] = []
-    for r in rows:
-        meta = r.get("metadata") or {}
-        fid = meta.get("file_id")
-        if fid and fid not in drive_ids:
-            orphans.append({"id": r.get("id"), "file_id": fid})
-    return orphans
-
-
-def _find_metadata_orphans() -> list[dict]:
-    from search.service_client import make_service_client
-
-    client = make_service_client()
-    drive_service = build_drive_service(_drive_creds())
-    drive_files = list_folder_meta_for_cleanup(drive_service, settings.drive_folder_id)
-    drive_ids = {f["id"] for f in drive_files}
-
-    rows = list_metadata(client)
-    return [
-        {"id": r.get("id"), "file_id": r.get("file_id")}
-        for r in rows
-        if r.get("id") and r.get("id") not in drive_ids
-    ]
-
-
-async def run_cleanup_job() -> dict:
-    from search.service_client import make_service_client
-
-    client = make_service_client()
-    doc_orphans = _find_document_orphans()
-    delete_orphan_documents(client, [int(o["id"]) for o in doc_orphans if o.get("id") is not None])
-
-    meta_orphans = _find_metadata_orphans()
-    delete_metadata(client, [str(o["id"]) for o in meta_orphans if o.get("id") is not None])
-
-    return {"deleted_documents": len(doc_orphans), "deleted_metadata": len(meta_orphans)}
-
-
-if __name__ == "__main__":
-    import asyncio
-
-    print(asyncio.run(run_cleanup_job()))
+    return results

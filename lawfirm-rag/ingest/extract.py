@@ -1,23 +1,22 @@
 from __future__ import annotations
 
-from io import BytesIO
-
-from pypdf import PdfReader
+import io
 
 
-def extract_pdf(data: bytes) -> str:
-    reader = PdfReader(BytesIO(data))
-    parts: list[str] = []
+def extract_text(raw_bytes: bytes, mime_type: str) -> str:
+    """Extract plain text from raw file bytes."""
+    if mime_type == "application/pdf":
+        return _extract_pdf(raw_bytes)
+    # Google Docs exported as text/plain, and any other text type
+    return raw_bytes.decode("utf-8", errors="replace")
+
+
+def _extract_pdf(raw_bytes: bytes) -> str:
+    from pypdf import PdfReader
+
+    reader = PdfReader(io.BytesIO(raw_bytes))
+    pages = []
     for page in reader.pages:
-        try:
-            parts.append(page.extract_text() or "")
-        except Exception:
-            continue
-    return "\n".join(parts)
-
-
-def extract_text(data: bytes) -> str:
-    try:
-        return data.decode("utf-8", errors="ignore")
-    except Exception:
-        return data.decode("latin-1", errors="ignore")
+        text = page.extract_text() or ""
+        pages.append(text)
+    return "\n\n".join(pages)

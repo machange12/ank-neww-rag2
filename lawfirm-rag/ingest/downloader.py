@@ -1,26 +1,47 @@
 from __future__ import annotations
 
 import io
+import logging
+from typing import Any
 
+from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
-from google.oauth2.credentials import Credentials
+
+from config import settings
+
+logger = logging.getLogger(__name__)
+
+SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
+
+GOOGLE_DOC_MIME   = "application/vnd.google-apps.document"
+EXPORT_MIME       = "text/plain"
 
 
-def build_drive_service(creds: Credentials):
+def _drive_service() -> Any:
+    creds = Credentials(
+        token=None,
+        refresh_token=settings.google_refresh_token,
+        client_id=settings.google_oauth_client_id,
+        client_secret=settings.google_oauth_client_secret,
+        token_uri="https://oauth2.googleapis.com/token",
+        scopes=SCOPES,
+    )
     return build("drive", "v3", credentials=creds, cache_discovery=False)
 
 
-def list_folder(service, folder_id: str, fields: str = "nextPageToken, files(id,name,mimeType,webViewLink)"):
-    q = f"'{folder_id}' in parents and trashed=false"
+def list_folder_files() -> list[dict[str, str]]:
+    """Return all files in the configured Drive folder."""
+    service = _drive_service()
+    query = f"'{settings.drive_folder_id}' in parents and trashed=false"
     files: list[dict] = []
     page_token = None
     while True:
-        resp = (
-            service.files()
-            .list(q=q, fields=fields, pageToken=page_token, supportsAllDrives=True)
-            .execute()
-        )
+        resp = service.files().list(
+            q=query,
+            fields="nextPageToken, files(id, name, mimeType, webViewLink)",
+            pageToken=page_token,
+        ).execute()
         files.extend(resp.get("files", []))
         page_token = resp.get("nextPageToken")
         if not page_token:
@@ -28,18 +49,40 @@ def list_folder(service, folder_id: str, fields: str = "nextPageToken, files(id,
     return files
 
 
-def list_folder_meta_for_cleanup(service, folder_id: str):
-    return list_folder(service, folder_id, fields="nextPageToken, files(id)")
-
-
-def download_file(service, file_id: str, mime_type: str | None) -> bytes:
-    if mime_type == "application/vnd.google-apps.document":
-        request = service.files().export_media(fileId=file_id, mimeType="text/plain")
+def download_file(file_id: str, mime_type: str) -> bytes:
+    """Download a Drive file; exports Google Docs as plain text."""
+    service = _drive_service()
+    if mime_type == GOOGLE_DOC_MIME:
+        req = service.files().export_media(fileId=file_id, mimeType=EXPORT_MIME)
     else:
-        request = service.files().get_media(fileId=file_id)
+        req = service.files().get_media(fileId=file_id)
+
     buf = io.BytesIO()
-    downloader = MediaIoBaseDownload(buf, request)
+    downloader = MediaIoBaseDownload(buf, req)
     done = False
     while not done:
         _, done = downloader.next_chunk()
     return buf.getvalue()
+
+
+async def ingest_folder() -> dict[str, Any]:
+    """Full folder re-ingest: list → download → embed → store."""
+    from ingest.store import upsert_file
+
+    files = list_folder_files()
+    results = {"total": len(files), "ok": 0, "errors": []}
+    for f in files:
+        try:
+            raw = download_file(f["id"], f["mimeType"])
+            await upsert_file(
+                file_id=f["id"],
+                file_title=f["name"],
+                file_url=f.get("webViewLink", ""),
+                mime_type=f["mimeType"],
+                raw_bytes=raw,
+            )
+            results["ok"] += 1
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Error ingesting %s: %s", f["id"], exc)
+            results["errors"].append({"file_id": f["id"], "error": str(exc)})
+    return results
