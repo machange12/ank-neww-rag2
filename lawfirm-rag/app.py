@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, Header, HTTPException, Request, Response
-from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from agents.rag_agent import run_chat
@@ -15,11 +18,31 @@ from search.supabase_client import make_anon_client, make_user_client
 from sessions.manager import build_session
 
 app = FastAPI(title="Law Firm Secure RAG", version="2.3456")
+STATIC_DIR = Path(__file__).resolve().parent / "static"
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+if (STATIC_DIR / "assets").exists():
+    app.mount("/assets", StaticFiles(directory=STATIC_DIR / "assets"), name="assets")
 
 
 @app.get("/healthz")
 async def healthz() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/", include_in_schema=False)
+async def frontend_index() -> FileResponse:
+    index_path = STATIC_DIR / "index.html"
+    if not index_path.exists():
+        raise HTTPException(status_code=404, detail="Frontend has not been built yet")
+    return FileResponse(index_path)
 
 
 class LoginBody(BaseModel):
@@ -46,6 +69,10 @@ class ChatBody(BaseModel):
 
 class ChatResponse(BaseModel):
     output: str
+
+
+class DriveFileIngestBody(BaseModel):
+    file_id: str
 
 
 @app.post("/auth/login", response_model=LoginResponse)
@@ -94,6 +121,30 @@ async def _resolve_headers_and_body(request: Request) -> tuple[dict, dict]:
     except Exception:
         body = {}
     return raw_headers, body if isinstance(body, dict) else {}
+
+
+def _auth_ctx_from_header(authorization: str | None) -> tuple[dict, dict]:
+    if not authorization:
+        raise HTTPException(status_code=401, detail="UNAUTHORIZED: missing Authorization header")
+    token = authorization.replace("Bearer ", "").replace("bearer ", "").strip()
+    if not token:
+        raise HTTPException(status_code=401, detail="UNAUTHORIZED: missing token")
+    try:
+        payload = verify_jwt(token)
+        ctx = build_user_ctx(payload, {}, {})
+        rbac = build_rbac_block(ctx, {})
+    except AuthError as e:
+        raise HTTPException(status_code=401, detail=str(e)) from e
+    except ValueError as e:
+        raise HTTPException(status_code=403, detail=str(e)) from e
+    return ctx, rbac
+
+
+def _require_ingest(authorization: str | None) -> tuple[dict, dict]:
+    ctx, rbac = _auth_ctx_from_header(authorization)
+    if not (rbac.get("perms") or {}).get("ingest"):
+        raise HTTPException(status_code=403, detail="FORBIDDEN: your role cannot ingest documents")
+    return ctx, rbac
 
 
 @app.post("/lawfirm-chat-trigger-006", response_model=ChatResponse)
@@ -147,6 +198,34 @@ async def chat_webhook(
     return ChatResponse(output=output)
 
 
+@app.get("/documents/drive-files")
+async def drive_files(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    _require_ingest(authorization)
+    from ingest.downloader import list_folder_files
+
+    files = list_folder_files()
+    return {"files": files, "total": len(files)}
+
+
+@app.post("/documents/ingest-folder")
+async def ingest_drive_folder(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    _require_ingest(authorization)
+    from ingest.downloader import ingest_folder
+
+    return await ingest_folder()
+
+
+@app.post("/documents/ingest-file")
+async def ingest_drive_file(
+    body: DriveFileIngestBody,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    _require_ingest(authorization)
+    from ingest.drive_webhook import handle_drive_event
+
+    return await handle_drive_event(file_id=body.file_id, event="manual")
+
+
 @app.options("/{path:path}")
 async def preflight(path: str) -> Response:
     headers = {
@@ -164,3 +243,13 @@ async def http_exc(_request: Request, exc: HTTPException) -> JSONResponse:
         content={"error": exc.detail},
         headers={"Access-Control-Allow-Origin": "*"},
     )
+
+
+@app.get("/{path:path}", include_in_schema=False)
+async def frontend_fallback(path: str) -> FileResponse:
+    if path.startswith(("auth/", "lawfirm-chat-trigger-006", "healthz", "docs", "openapi.json", "redoc")):
+        raise HTTPException(status_code=404, detail="Not found")
+    index_path = STATIC_DIR / "index.html"
+    if not index_path.exists():
+        raise HTTPException(status_code=404, detail="Frontend has not been built yet")
+    return FileResponse(index_path)
