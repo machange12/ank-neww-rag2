@@ -29,5 +29,12 @@ class Settings(BaseSettings):
     retrieve_top_k: int = 20
     context_window: int = 10
 
+    # Ingest defaults used ONLY by paths without a caller in scope (Drive webhook).
+    # User-triggered ingest endpoints MUST pass access_level + matter_id explicitly.
+    # These defaults are intentionally conservative — they let the path run but
+    # anything ingested under them should be flagged for re-classification.
+    default_ingest_access_level: int = 1
+    default_ingest_matter_id: str = ""
+
 
 settings = Settings()

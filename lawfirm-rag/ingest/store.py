@@ -18,8 +18,8 @@ async def upsert_file(
     file_url: str,
     mime_type: str,
     raw_bytes: bytes,
-    access_level: int = 1,
-    matter_id: str = "",
+    access_level: int,
+    matter_id: str,
 ) -> dict[str, Any]:
     """
     Full ingest pipeline for one file:
@@ -29,7 +29,21 @@ async def upsert_file(
       4. Insert new document rows
       5. Upsert document_metadata row
     Uses the SERVICE ROLE client — bypasses RLS intentionally for writes.
+
+    SECURITY: ``access_level`` and ``matter_id`` are REQUIRED. They were
+    previously defaulted to ``1`` and ``""``, which silently stamped every
+    document as lowest-privilege / no-matter — a real access-control gap
+    (the matter scope filter became meaningless and access_level ceilings
+    could not be enforced for higher-privilege docs). Callers MUST
+    compute these values from the requesting user's role or an explicit
+    configuration source. There is no safe default.
     """
+    if access_level < 1:
+        raise ValueError(
+            f"access_level must be >= 1 for file_id={file_id}; got {access_level}"
+        )
+    if matter_id is None:
+        raise ValueError(f"matter_id must not be None for file_id={file_id}")
     client = make_service_client()
 
     text = extract_text(raw_bytes, mime_type)
