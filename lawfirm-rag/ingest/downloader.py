@@ -65,12 +65,28 @@ def download_file(file_id: str, mime_type: str) -> bytes:
     return buf.getvalue()
 
 
-async def ingest_folder() -> dict[str, Any]:
-    """Full folder re-ingest: list → download → embed → store."""
+async def ingest_folder(
+    access_level: int,
+    matter_id: str,
+) -> dict[str, Any]:
+    """
+    Full folder re-ingest: list → download → embed → store.
+
+    ``access_level`` and ``matter_id`` are REQUIRED. They are derived from the
+    requesting user's RBAC (max access the caller can read) and the matter
+    scope they are acting inside. The caller (chat-app endpoint) is in scope
+    and MUST supply these — there is no safe default.
+    """
     from ingest.store import upsert_file
 
     files = list_folder_files()
-    results = {"total": len(files), "ok": 0, "errors": []}
+    results = {
+        "total": len(files),
+        "ok": 0,
+        "errors": [],
+        "access_level": access_level,
+        "matter_id": matter_id,
+    }
     for f in files:
         try:
             raw = download_file(f["id"], f["mimeType"])
@@ -80,6 +96,8 @@ async def ingest_folder() -> dict[str, Any]:
                 file_url=f.get("webViewLink", ""),
                 mime_type=f["mimeType"],
                 raw_bytes=raw,
+                access_level=access_level,
+                matter_id=matter_id,
             )
             results["ok"] += 1
         except Exception as exc:  # noqa: BLE001

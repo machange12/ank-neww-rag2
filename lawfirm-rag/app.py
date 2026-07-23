@@ -73,6 +73,7 @@ class ChatResponse(BaseModel):
 
 class DriveFileIngestBody(BaseModel):
     file_id: str
+    matter_id: str | None = None
 
 
 @app.post("/auth/login", response_model=LoginResponse)
@@ -208,11 +209,33 @@ async def drive_files(authorization: str | None = Header(default=None)) -> dict[
 
 
 @app.post("/documents/ingest-folder")
-async def ingest_drive_folder(authorization: str | None = Header(default=None)) -> dict[str, Any]:
-    _require_ingest(authorization)
+async def ingest_drive_folder(
+    request: Request,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    """
+    Re-ingest the entire configured Drive folder.
+
+    SECURITY: ``access_level`` and ``matter_id`` are derived from the
+    requesting user. ``access_level`` is the caller's RBAC level (max sensitivity
+    they can READ), which is the correct ceiling for documents they can also
+    WRITE. ``matter_id`` is taken from the request body when supplied, otherwise
+    the caller's first matter_id — so matter-scoped users stamp documents into
+    their own matter, not into the firm's open pool.
+    """
+    ctx, rbac = _require_ingest(authorization)
+    try:
+        json_body = await request.json()
+    except Exception:
+        json_body = {}
+    if not isinstance(json_body, dict):
+        json_body = {}
+
     from ingest.downloader import ingest_folder
 
-    return await ingest_folder()
+    matter_id = json_body.get("matter_id") or _pick_user_matter(ctx)
+    access_level = int((rbac.get("perms") or {}).get("level") or 1)
+    return await ingest_folder(access_level=access_level, matter_id=matter_id)
 
 
 @app.post("/documents/ingest-file")
@@ -220,10 +243,32 @@ async def ingest_drive_file(
     body: DriveFileIngestBody,
     authorization: str | None = Header(default=None),
 ) -> dict[str, Any]:
-    _require_ingest(authorization)
+    """
+    Ingest a single Drive file.
+
+    SECURITY: ``access_level`` is derived from the caller's RBAC level.
+    ``matter_id`` comes from the body when supplied, otherwise the caller's
+    first matter_id.
+    """
+    ctx, rbac = _require_ingest(authorization)
     from ingest.drive_webhook import handle_drive_event
 
-    return await handle_drive_event(file_id=body.file_id, event="manual")
+    matter_id = body.matter_id or _pick_user_matter(ctx)
+    access_level = int((rbac.get("perms") or {}).get("level") or 1)
+    return await handle_drive_event(
+        file_id=body.file_id,
+        event="manual",
+        access_level=access_level,
+        matter_id=matter_id,
+    )
+
+
+def _pick_user_matter(ctx: dict[str, Any]) -> str:
+    """Return the caller's first matter_id, or '' if they have ``view_all``."""
+    matters = ctx.get("matter_ids") or []
+    if not matters:
+        return ""
+    return str(matters[0])
 
 
 @app.options("/{path:path}")

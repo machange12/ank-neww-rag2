@@ -65,9 +65,35 @@ async def drive_webhook(
 
 @app.post("/ingest/manual")
 async def manual_ingest(request: Request) -> JSONResponse:
-    """Trigger a full folder re-ingest (mirrors the n8n Manual Trigger)."""
+    """
+    Trigger a full folder re-ingest (mirrors the n8n Manual Trigger).
+
+    SECURITY: The worker has no caller RBAC context, so the operator MUST
+    supply ``access_level`` and ``matter_id`` in the request body. This avoids
+    silently stamping every re-ingested document with the lowest privilege /
+    no-matter defaults (Item 1 fix).
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+
+    access_level = body.get("access_level")
+    matter_id = body.get("matter_id")
+    if access_level is None or matter_id is None:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Both 'access_level' (int) and 'matter_id' (str) are required "
+                "in the request body. The worker has no caller RBAC context, "
+                "so silent defaults would re-introduce the access-control gap."
+            ),
+        )
+
     from ingest.downloader import ingest_folder
-    result = await ingest_folder()
+    result = await ingest_folder(access_level=int(access_level), matter_id=str(matter_id))
     return JSONResponse(result, status_code=200)
 
 
