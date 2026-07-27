@@ -15,6 +15,7 @@ rls/filter_builder.py        # RLS payload
 rls/access_context.py        # RPC set_access_context
 agents/rag_agent.py          # ChatOpenAI + SupabaseVectorStore + Cohere rerank + PostgresChatMemory
 ingest/{downloader, extract, embed, store, drive_webhook}.py
+search/hybrid.py              # hybrid RPC-backed search (vector + keyword fusion)
 cleanup/orphan_finder.py     # Nightly vector + metadata orphans
 search/{supabase_client, service_client}.py
 scripts/chat_smoketest.py    # Partner vs Associate comparison
@@ -203,6 +204,7 @@ select count(*) from public.documents
 | POST   | `/auth/login`                 | Exchange email/password → JWT        |
 | POST   | `/lawfirm-chat-trigger-006`   | Secure RAG chat (Authorization header) |
 | POST   | `/drive/webhook` (worker)     | Google Drive push event ingest       |
+| POST   | `/lawfirm-chat-stream`        | Streaming RAG chat (SSE tokens)      |
 | GET    | `/healthz`                    | Liveness                             |
 
 ### Chat request
@@ -220,6 +222,62 @@ Content-Type: application/json
 ```json
 { "output": "..." }
 ```
+
+---
+
+## Recent updates (2026-07-27)
+
+Several important improvements were applied across the ingest, search and serving layers. They are listed here along with manual steps required to enable them in Supabase or your environment.
+
+- Fix: Drive per-file properties read during ingest
+  - list_folder_files() requests Drive `properties` so per-file custom properties (access_level, matter_id) are available.
+  - The folder re-ingest and webhook paths prefer these properties when stamping ingested documents.
+  - Why: prevents silently misclassifying documents with default, low-privilege metadata.
+
+- Change: Better text splitting
+  - The pipeline now uses RecursiveCharacterTextSplitter (with sensible separators) for chunking legal text instead of the simpler CharacterTextSplitter.
+  - Why: produces cleaner, semantically-cohesive chunks and improves retrieval relevance.
+
+- Change: Skip re-embedding unchanged files
+  - upsert_file() computes a SHA-256 content_hash on the raw bytes and stores it in `document_metadata.content_hash`.
+  - If a file's content_hash is unchanged, the ingest will skip re-embedding and return early with skipped=true.
+  - Manual SQL to run in Supabase:
+
+```sql
+ALTER TABLE public.document_metadata
+ADD COLUMN IF NOT EXISTS content_hash text;
+```
+
+- New: Hybrid search integration (vector + keyword)
+  - A new helper `search/hybrid.py` calls a Supabase RPC named `hybrid_search_rls` that must be created in your DB. The RPC is expected to combine pgvector cosine similarity with tsvector BM25 (for example via Reciprocal Rank Fusion) and return rows with `content` and `metadata`.
+  - The agent's retriever prefers the hybrid RPC results and falls back to the existing vector similarity search when the RPC is not available.
+  - Why: combining lexical BM25 signals with dense vectors improves recall on legal queries (party names, statutes, precise phrases).
+
+- Change: Query rewriting (multi-query retrieval)
+  - Retrieval is wrapped with MultiQueryRetriever.from_llm(..., include_original=True) so alternate rewritten queries are issued to broaden recall.
+
+- New: Streaming chat endpoint (Server-Sent Events)
+  - POST /lawfirm-chat-stream streams tokens as SSE events: each token is emitted as `data: {token}\n\n` and the stream ends with `data: [DONE]\n\n`.
+  - The existing /lawfirm-chat-trigger-006 endpoint remains unchanged.
+  - Note: streaming currently emits the LLM token stream for the assembled prompt. Streaming of interleaved tool calls and tool outputs requires additional callback wiring if needed.
+
+- Change: Richer chunk metadata
+  - Each inserted chunk now carries metadata fields: access_level, matter_id, mime_type, ingested_at (UTC ISO), chunk_index and total_chunks. This aids auditing and RLS enforcement.
+
+- Change: LangSmith / LangChain tracing environment
+  - New .env entries: LANGCHAIN_API_KEY (from smith.langchain.com) and LANGCHAIN_PROJECT (defaults to newFirmRAG). When LANGCHAIN_API_KEY is present the app sets LANGCHAIN_TRACING_V2, LANGCHAIN_API_KEY and LANGCHAIN_PROJECT environment variables at startup.
+
+---
+
+## Manual steps and notes
+
+1. Run the `ALTER TABLE` above to add `content_hash` to `document_metadata` so unchanged-file detection works.
+
+2. Create the Supabase RPC `hybrid_search_rls` in your project. It should accept (query_text text, query_embedding vector, match_count int, rrf_k int) and return rows with `content` and `metadata`. A recommended approach is to run a pgvector cosine similarity query and a tsvector BM25 query, then fuse results via Reciprocal Rank Fusion (RRF).
+
+3. If you want tracing in LangSmith/Smith, set LANGCHAIN_API_KEY and LANGCHAIN_PROJECT in your .env or environment.
+
+4. Verify dependencies: make sure your runtime has the langchain-related packages installed and versions compatible with ChatOpenAI streaming and the other integrations.
 
 ---
 

@@ -64,13 +64,22 @@ async def handle_drive_event(
         return {"status": "not_found", "file_id": file_id}
 
     raw = download_file(file_id, file_meta["mimeType"])
+
+    # Prefer per-file Drive properties when present; fall back to provided args
+    props = file_meta.get("properties") or {}
+    try:
+        file_access_level = int(props.get("access_level", access_level or settings.default_ingest_access_level))
+    except Exception:
+        file_access_level = int(access_level or settings.default_ingest_access_level)
+    file_matter_id = props.get("matter_id", matter_id or settings.default_ingest_matter_id)
+
     result = await upsert_file(
         file_id=file_id,
         file_title=file_meta["name"],
         file_url=file_meta.get("webViewLink", ""),
         mime_type=file_meta["mimeType"],
         raw_bytes=raw,
-        access_level=access_level,
-        matter_id=matter_id,
+        access_level=file_access_level,
+        matter_id=file_matter_id,
     )
     return {"status": "ingested", **result}

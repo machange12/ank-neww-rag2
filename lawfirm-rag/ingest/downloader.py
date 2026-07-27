@@ -39,7 +39,7 @@ def list_folder_files() -> list[dict[str, str]]:
     while True:
         resp = service.files().list(
             q=query,
-            fields="nextPageToken, files(id, name, mimeType, webViewLink)",
+            fields="nextPageToken, files(id, name, mimeType, webViewLink, properties)",
             pageToken=page_token,
         ).execute()
         files.extend(resp.get("files", []))
@@ -90,14 +90,22 @@ async def ingest_folder(
     for f in files:
         try:
             raw = download_file(f["id"], f["mimeType"])
+            # Drive file custom properties can carry per-file access info.
+            props = f.get("properties") or {}
+            try:
+                file_access_level = int(props.get("access_level", access_level or 1))
+            except Exception:
+                file_access_level = int(access_level or 1)
+            file_matter_id = props.get("matter_id", matter_id or "")
+
             await upsert_file(
                 file_id=f["id"],
                 file_title=f["name"],
                 file_url=f.get("webViewLink", ""),
                 mime_type=f["mimeType"],
                 raw_bytes=raw,
-                access_level=access_level,
-                matter_id=matter_id,
+                access_level=file_access_level,
+                matter_id=file_matter_id,
             )
             results["ok"] += 1
         except Exception as exc:  # noqa: BLE001
