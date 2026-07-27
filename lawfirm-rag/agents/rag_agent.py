@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, List
 
 from langchain.agents import AgentExecutor, create_openai_functions_agent
 from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
@@ -11,7 +11,10 @@ from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_postgres import PostgresChatMessageHistory
 from langchain.memory import ConversationBufferWindowMemory
 from langchain_community.vectorstores import SupabaseVectorStore
+from langchain.schema import BaseRetriever, Document, SystemMessage, HumanMessage
+from langchain.retrievers.multi_query import MultiQueryRetriever
 
+from search.hybrid import hybrid_search
 from config import settings
 
 logger = logging.getLogger(__name__)
@@ -42,10 +45,39 @@ def _make_vector_store(user_client: Any) -> SupabaseVectorStore:
     )
 
 
-def _make_retriever(user_client: Any) -> Any:
+class HybridRetriever(BaseRetriever):
+    """Retriever that tries a hybrid (vector + keyword) RPC first and falls back to vector similarity."""
+
+    def __init__(self, user_client: Any, store: SupabaseVectorStore):
+        self.user_client = user_client
+        self.store = store
+
+    def get_relevant_documents(self, query: str) -> List[Document]:
+        try:
+            docs = hybrid_search(self.user_client, query, match_count=settings.retrieve_top_k)
+        except Exception:
+            docs = []
+        if docs:
+            return docs
+        # Fallback to vector similarity
+        return self.store.similarity_search(query, k=settings.retrieve_top_k)
+
+
+def _make_retriever(user_client: Any, llm: Any) -> Any:
     store = _make_vector_store(user_client)
     base_retriever = store.as_retriever(search_kwargs={"k": settings.retrieve_top_k})
 
+    # Use the hybrid retriever that prefers the RPC-based fusion search
+    hybrid_retriever = HybridRetriever(user_client=user_client, store=store)
+
+    # Wrap with multi-query rewriting to broaden retrievals
+    multi_retriever = MultiQueryRetriever.from_llm(
+        retriever=hybrid_retriever,
+        llm=llm,
+        include_original=True,
+    )
+
+    # Optionally apply Cohere reranking as a contextual compressor
     if settings.cohere_api_key:
         compressor = CohereRerank(
             cohere_api_key=settings.cohere_api_key,
@@ -55,10 +87,10 @@ def _make_retriever(user_client: Any) -> Any:
         from langchain.retrievers import ContextualCompressionRetriever
         return ContextualCompressionRetriever(
             base_compressor=compressor,
-            base_retriever=base_retriever,
+            base_retriever=multi_retriever,
         )
 
-    return base_retriever
+    return multi_retriever
 
 
 def run_chat(
@@ -69,7 +101,8 @@ def run_chat(
 ) -> str:
     """
     Run one turn of the RAG chat agent.
-    - Retrieves via match_documents_rls (security invoker, RLS-gated).
+    - Retrieves via hybrid_search_rls (if present) with RLS; falls back to vector similarity.
+    - Rewrites query with MultiQueryRetriever.from_llm before retrieval.
     - Reranks with Cohere if COHERE_API_KEY is set.
     - Stores conversation in Postgres chat_memory table.
     """
@@ -80,7 +113,7 @@ def run_chat(
         openai_api_key=settings.openai_api_key,
     )
 
-    retriever = _make_retriever(user_client)
+    retriever = _make_retriever(user_client, llm)
     search_tool = create_retriever_tool(
         retriever,
         name="search_law_firm_documents",
@@ -126,3 +159,36 @@ def run_chat(
     })
 
     return result.get("output") or ""
+
+
+async def stream_chat(
+    session_id: str,
+    system_prefix: str,
+    chat_input: str,
+    user_client: Any,
+):
+    """
+    Async generator that yields tokens from the LLM as they arrive.
+
+    This streaming path mirrors the run_chat prompt construction but currently
+    streams the LLM output directly. Retrieval and tool-based executions are
+    still handled in the standard (non-streaming) path via run_chat.
+    """
+    llm = ChatOpenAI(
+        model=settings.chat_model,
+        temperature=0,
+        max_tokens=settings.chat_max_tokens,
+        openai_api_key=settings.openai_api_key,
+        streaming=True,
+    )
+
+    system_text = RAG_SYSTEM_TEMPLATE.format(system_prefix=system_prefix)
+    sys_msg = SystemMessage(content=system_text)
+    human_msg = HumanMessage(content=chat_input)
+
+    try:
+        async for token in llm.astream([sys_msg, human_msg]):
+            yield token
+    except Exception as exc:
+        logger.debug("streaming LLM failed: %s", exc)
+        return
