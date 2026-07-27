@@ -36,5 +36,10 @@ class Settings(BaseSettings):
     default_ingest_access_level: int = 1
     default_ingest_matter_id: str = ""
 
+    # LangSmith / LangChain tracing (optional)
+    langchain_tracing_v2: str = "false"
+    langchain_api_key: str = ""
+    langchain_project: str = "newFirmRAG"
+
 
 settings = Settings()

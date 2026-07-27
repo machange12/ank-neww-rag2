@@ -1,16 +1,17 @@
 from __future__ import annotations
 
-from langchain.text_splitter import CharacterTextSplitter
+from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_openai import OpenAIEmbeddings
 
 from config import settings
 
 
 def chunk_text(text: str) -> list[str]:
-    splitter = CharacterTextSplitter(
+    splitter = RecursiveCharacterTextSplitter(
         chunk_size=settings.chunk_size,
         chunk_overlap=settings.chunk_overlap,
-        separator="\n",
+        separators=["\n\n", "\n", ". ", " ", ""],
+        length_function=len,
     )
     return splitter.split_text(text)
 

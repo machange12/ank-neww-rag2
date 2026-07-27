@@ -5,17 +5,26 @@ from typing import Any
 
 from fastapi import FastAPI, Header, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+import os
 
-from agents.rag_agent import run_chat
+from agents.rag_agent import run_chat, stream_chat
 from auth.jwt_validator import AuthError, build_user_ctx, verify_jwt
 from rbac.checker import build_rbac_block
 from rls.access_context import set_access_context
 from rls.filter_builder import build_rls_filter
 from search.supabase_client import make_anon_client, make_user_client
 from sessions.manager import build_session
+from config import settings
+
+# LangSmith / LangChain tracing environment (optional). If an API key is set
+# enable the v2 tracing environment so downstream LangChain tooling can pick it up.
+if settings.langchain_api_key:
+    os.environ["LANGCHAIN_TRACING_V2"] = "true"
+    os.environ["LANGCHAIN_API_KEY"] = settings.langchain_api_key
+    os.environ["LANGCHAIN_PROJECT"] = settings.langchain_project
 
 app = FastAPI(title="Law Firm Secure RAG", version="2.3456")
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -197,6 +206,67 @@ async def chat_webhook(
         user_client=user_client,
     )
     return ChatResponse(output=output)
+
+
+@app.post("/lawfirm-chat-stream")
+async def chat_webhook_stream(
+    request: Request,
+    authorization: str | None = Header(default=None),
+) -> StreamingResponse:
+    """Streaming chat endpoint that returns Server-Sent Events (SSE).
+
+    Mirrors /lawfirm-chat-trigger-006 auth, RBAC and session logic, then
+    streams token events as they arrive from the LLM.
+    """
+    raw_headers, body = await _resolve_headers_and_body(request)
+
+    if authorization:
+        token = authorization.replace("Bearer ", "").replace("bearer ", "").strip()
+        try:
+            payload = verify_jwt(token)
+        except AuthError as e:
+            raise HTTPException(status_code=401, detail=str(e))
+        ctx = build_user_ctx(payload, raw_headers, body)
+    else:
+        try:
+            user_client, token = await _resolve_user_client(body.get("authorization") if isinstance(body, dict) else None)  # type: ignore
+        except HTTPException:
+            body_inner = body.get("body", {}) if isinstance(body, dict) else {}
+            auth_inner = body_inner.get("authorization") if isinstance(body_inner, dict) else None
+            if not auth_inner:
+                raise HTTPException(status_code=401, detail="UNAUTHORIZED: missing credentials") from None
+            user_client, token = await _resolve_user_client(auth_inner)  # type: ignore
+        try:
+            payload = verify_jwt(token)
+        except AuthError as e:
+            raise HTTPException(status_code=401, detail=str(e))
+        ctx = build_user_ctx(payload, raw_headers, body)
+
+    rbac = build_rbac_block(ctx, body)
+    session = build_session(ctx, rbac)
+    rls = build_rls_filter(rbac, ctx, body)
+
+    if authorization:
+        user_client = make_user_client(token)
+
+    await set_access_context(user_client, ctx, rbac, rls)
+
+    chat_input = rls.get("chat_input") or ""
+    if not chat_input:
+        raise HTTPException(status_code=400, detail="BAD_REQUEST: missing chat input")
+
+    async def event_stream():
+        # stream_chat yields raw token strings; wrap them as SSE 'data: ...' events
+        async for token in stream_chat(
+            session_id=session["session_id"],
+            system_prefix=rbac["system_prompt_prefix"],
+            chat_input=chat_input,
+            user_client=user_client,
+        ):
+            yield f"data: {token}\n\n"
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
 @app.get("/documents/drive-files")

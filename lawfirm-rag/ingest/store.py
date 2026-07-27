@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import hashlib
 from datetime import datetime, timezone
 from typing import Any
 
@@ -46,6 +47,22 @@ async def upsert_file(
         raise ValueError(f"matter_id must not be None for file_id={file_id}")
     client = make_service_client()
 
+    # Compute content hash to detect unchanged files and avoid re-embedding.
+    content_hash = hashlib.sha256(raw_bytes).hexdigest()
+    try:
+        res = client.table("document_metadata").select("content_hash").eq("file_id", file_id).execute()
+        existing_hash = None
+        # Supabase client returns .data in some variants, or raw list in others
+        data = getattr(res, "data", None) or res
+        if isinstance(data, list) and len(data) > 0:
+            existing_hash = data[0].get("content_hash")
+    except Exception:
+        existing_hash = None
+
+    if existing_hash and existing_hash == content_hash:
+        logger.info("skipping unchanged file file_id=%s", file_id)
+        return {"file_id": file_id, "chunks": 0, "skipped": True}
+
     text = extract_text(raw_bytes, mime_type)
     chunks = chunk_text(text)
     if not chunks:
@@ -57,26 +74,40 @@ async def upsert_file(
     # Delete old vectors for this file (idempotent re-ingest)
     client.rpc("delete_documents_by_file_id", {"p_file_id": file_id}).execute()
 
-    # Insert new document rows
+    ingested_at = datetime.now(timezone.utc).isoformat()
+    total_chunks = len(chunks)
+
+    # Insert new document rows (one row per chunk). Include richer metadata per chunk.
     rows = [
         {
-            "content":      chunk,
-            "embedding":    embedding,
-            "metadata":     {"file_id": file_id, "file_title": file_title, "url": file_url},
+            "content":   chunk,
+            "embedding": embedding,
+            "metadata": {
+                "file_id": file_id,
+                "file_title": file_title,
+                "url": file_url,
+                "access_level": access_level,
+                "matter_id": matter_id,
+                "mime_type": mime_type,
+                "ingested_at": ingested_at,
+                "chunk_index": i,
+                "total_chunks": total_chunks,
+            },
             "access_level": access_level,
-            "matter_id":    matter_id,
+            "matter_id": matter_id,
         }
-        for chunk, embedding in zip(chunks, embeddings)
+        for i, (chunk, embedding) in enumerate(zip(chunks, embeddings))
     ]
     client.table("documents").insert(rows).execute()
 
-    # Upsert metadata record
+    # Upsert metadata record (includes content_hash to enable unchanged-file detection)
     client.table("document_metadata").upsert({
         "file_id":     file_id,
         "file_title":  file_title,
         "url":         file_url,
         "mime_type":   mime_type,
-        "ingested_at": datetime.now(timezone.utc).isoformat(),
+        "ingested_at": ingested_at,
+        "content_hash": content_hash,
     }, on_conflict="file_id").execute()
 
     logger.info("Ingested file_id=%s chunks=%d", file_id, len(chunks))
