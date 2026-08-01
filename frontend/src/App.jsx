@@ -61,6 +61,12 @@ const SAMPLE_MATTERS = [
   { id: "M-2024-001", name: "Commercial litigation", access: "Matter team" },
 ];
 
+const SAMPLE_DOCS = [
+  { id: "doc-001", title: "NDA Review - M-2024-118", type: "Contract", status: "Indexed" },
+  { id: "doc-002", title: "Privacy incident checklist", type: "Policy", status: "Indexed" },
+  { id: "doc-003", title: "Disclosure memo draft", type: "Memo", status: "Indexed" },
+];
+
 function sourceTitleFromCitation(citation) {
   return citation.replace(/^\[|\]$/g, "").trim() || "Retrieved source";
 }
@@ -204,8 +210,8 @@ export default function ANKRagDashboard() {
   const [activeNav, setActiveNav] = useState("Research");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [token, setToken] = useState("");
-  const [userLabel, setUserLabel] = useState("Not signed in");
+  const [token, setToken] = useState(() => localStorage.getItem("ank_rag_token") || "");
+  const [userLabel, setUserLabel] = useState(() => localStorage.getItem("ank_rag_user") || "Not signed in");
   const [answer, setAnswer] = useState("");
   const [status, setStatus] = useState("Ready");
   const [error, setError] = useState("");
@@ -231,14 +237,29 @@ export default function ANKRagDashboard() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password }),
       });
-      const data = await response.json();
+      const responseText = await response.text();
+      let data = {};
+      try {
+        data = JSON.parse(responseText);
+      } catch {
+        data = { detail: responseText || "Login failed" };
+      }
       if (!response.ok) throw new Error(data.error || data.detail || "Login failed");
       setToken(data.access_token);
+      localStorage.setItem("ank_rag_token", data.access_token);
       setUserLabel(email);
+      localStorage.setItem("ank_rag_user", email);
       setStatus("Signed in");
       setActiveNav("Research");
     } catch (err) {
-      setError(err.message);
+      const message = err.message || "Login failed";
+      const cleaned = message
+        .replace(/login_failed:/i, "")
+        .replace(/login failed/i, "")
+        .replace(/invalid login credentials/i, "Invalid email or password")
+        .replace(/invalid credentials/i, "Invalid email or password")
+        .trim();
+      setError(cleaned || "Login failed");
     } finally {
       setIsLoggingIn(false);
     }
@@ -261,7 +282,13 @@ export default function ANKRagDashboard() {
         },
         body: JSON.stringify({ chatInput: query, sessionId: "ank-dashboard" }),
       });
-      const data = await response.json();
+      const responseText = await response.text();
+      let data = {};
+      try {
+        data = JSON.parse(responseText);
+      } catch {
+        data = { detail: responseText || "RAG request failed" };
+      }
       if (!response.ok) throw new Error(data.error || data.detail || "RAG request failed");
       const output = data.output || "";
       const latency = ((performance.now() - started) / 1000).toFixed(1);
