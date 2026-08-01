@@ -87,20 +87,26 @@ class DriveFileIngestBody(BaseModel):
 
 @app.post("/auth/login", response_model=LoginResponse)
 async def login(body: LoginBody) -> LoginResponse:
-    client = make_anon_client()
-    res = client.auth.sign_in_with_password({"email": body.email, "password": body.password})
-    sess = res.session if hasattr(res, "session") else res
-    user = res.user if hasattr(res, "user") else None
-    access = getattr(sess, "access_token", "") or ""
-    refresh = getattr(sess, "refresh_token", "") or ""
-    return LoginResponse(
-        access_token=access,
-        refresh_token=refresh,
-        expires_in=getattr(sess, "expires_in", None),
-        token_type=getattr(sess, "token_type", None),
-        user_id=getattr(user, "id", None) if user else None,
-        role=(getattr(user, "app_metadata", {}) or {}).get("role") if user else None,
-    )
+    try:
+        client = make_anon_client()
+        res = client.auth.sign_in_with_password({"email": body.email, "password": body.password})
+        sess = res.session if hasattr(res, "session") else res
+        user = res.user if hasattr(res, "user") else None
+        access = getattr(sess, "access_token", "") or ""
+        refresh = getattr(sess, "refresh_token", "") or ""
+        return LoginResponse(
+            access_token=access,
+            refresh_token=refresh,
+            expires_in=getattr(sess, "expires_in", None),
+            token_type=getattr(sess, "token_type", None),
+            user_id=getattr(user, "id", None) if user else None,
+            role=(getattr(user, "app_metadata", {}) or {}).get("role") if user else None,
+        )
+    except Exception as exc:
+        message = str(exc).strip()
+        if "invalid login credentials" in message.lower() or "invalid credentials" in message.lower():
+            raise HTTPException(status_code=401, detail=message) from exc
+        raise HTTPException(status_code=500, detail=f"LOGIN_FAILED: {message}") from exc
 
 
 async def _resolve_user_client(authorization: str | None) -> Any:
