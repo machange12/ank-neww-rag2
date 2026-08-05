@@ -15,7 +15,8 @@ create index if not exists documents_content_tsv_gin_idx
 
 create or replace function public.match_documents_rls(
   query_embedding vector,
-  match_count int default 20
+  match_count int default 20,
+  filter jsonb default '{}'::jsonb
 ) returns table (
   id bigint,
   content text,
@@ -36,12 +37,14 @@ as $$
     d.matter_id,
     1 - (d.embedding <=> query_embedding) as similarity
   from public.documents d
-  where d.embedding is not null
+  where
+    d.embedding is not null
+    and (filter = '{}'::jsonb or d.metadata @> filter)
   order by d.embedding <=> query_embedding
   limit match_count;
 $$;
 
-grant execute on function public.match_documents_rls(vector, int)
+grant execute on function public.match_documents_rls(vector, int, jsonb)
   to authenticated, anon;
 
 create or replace function public.hybrid_search_rls(

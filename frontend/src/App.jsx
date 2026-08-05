@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   BarChart3,
   BookOpenText,
@@ -61,12 +61,6 @@ const SAMPLE_MATTERS = [
   { id: "M-2024-001", name: "Commercial litigation", access: "Matter team" },
 ];
 
-const SAMPLE_DOCS = [
-  { id: "doc-001", title: "NDA Review - M-2024-118", type: "Contract", status: "Indexed" },
-  { id: "doc-002", title: "Privacy incident checklist", type: "Policy", status: "Indexed" },
-  { id: "doc-003", title: "Disclosure memo draft", type: "Memo", status: "Indexed" },
-];
-
 function sourceTitleFromCitation(citation) {
   return citation.replace(/^\[|\]$/g, "").trim() || "Retrieved source";
 }
@@ -104,6 +98,13 @@ function downloadText(filename, text) {
   link.download = filename;
   link.click();
   URL.revokeObjectURL(url);
+}
+
+function formatDate(value) {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  return date.toLocaleString();
 }
 
 function buildSuggestions(query) {
@@ -222,9 +223,32 @@ export default function ANKRagDashboard() {
   const [history, setHistory] = useState(() => JSON.parse(localStorage.getItem("ank_rag_history") || "[]"));
   const [saved, setSaved] = useState(() => JSON.parse(localStorage.getItem("ank_rag_saved") || "[]"));
   const [compactMode, setCompactMode] = useState(false);
+  const [documents, setDocuments] = useState([]);
+  const [driveFiles, setDriveFiles] = useState([]);
+  const [documentStatus, setDocumentStatus] = useState("Ready");
+  const [isLoadingDocuments, setIsLoadingDocuments] = useState(false);
+  const [isLoadingDrive, setIsLoadingDrive] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+  const [isIngestingDrive, setIsIngestingDrive] = useState(false);
+  const [uploadFile, setUploadFile] = useState(null);
+  const [uploadMatterId, setUploadMatterId] = useState("");
+  const [uploadAccessLevel, setUploadAccessLevel] = useState("1");
 
   const sources = useMemo(() => extractSources(answer), [answer]);
   const queryCount = history.length;
+
+  useEffect(() => {
+    if (token) {
+      loadDocuments();
+    }
+  }, [token]);
+
+  function authHeaders(extra = {}) {
+    return {
+      ...extra,
+      Authorization: `Bearer ${token}`,
+    };
+  }
 
   async function login(event) {
     event.preventDefault();
@@ -348,6 +372,155 @@ export default function ANKRagDashboard() {
     setNotice("Memo exported.");
   }
 
+  async function loadDocuments() {
+    setIsLoadingDocuments(true);
+    setDocumentStatus("Loading documents");
+    try {
+      const response = await fetch(`${API_BASE}/documents`, {
+        headers: authHeaders(),
+      });
+      const responseText = await response.text();
+      let data = {};
+      try {
+        data = JSON.parse(responseText);
+      } catch {
+        data = { detail: responseText || "Could not load documents" };
+      }
+      if (!response.ok) throw new Error(data.error || data.detail || "Could not load documents");
+      setDocuments(data.documents || []);
+      setDocumentStatus(`Loaded ${(data.documents || []).length} documents`);
+    } catch (err) {
+      setError(err.message);
+      setDocumentStatus("Document load failed");
+    } finally {
+      setIsLoadingDocuments(false);
+    }
+  }
+
+  async function uploadDocument(event) {
+    event.preventDefault();
+    if (!uploadFile) return;
+    setError("");
+    setNotice("");
+    setIsUploading(true);
+    setDocumentStatus("Uploading document");
+    try {
+      const formData = new FormData();
+      formData.append("file", uploadFile);
+      formData.append("matter_id", uploadMatterId);
+      formData.append("access_level", uploadAccessLevel);
+
+      const response = await fetch(`${API_BASE}/documents/upload`, {
+        method: "POST",
+        headers: authHeaders(),
+        body: formData,
+      });
+      const responseText = await response.text();
+      let data = {};
+      try {
+        data = JSON.parse(responseText);
+      } catch {
+        data = { detail: responseText || "Upload failed" };
+      }
+      if (!response.ok) throw new Error(data.error || data.detail || "Upload failed");
+      setUploadFile(null);
+      setNotice(`Indexed ${data.chunks || 0} chunks from ${data.file_id || uploadFile.name}.`);
+      setDocumentStatus("Upload indexed");
+      await loadDocuments();
+    } catch (err) {
+      setError(err.message);
+      setDocumentStatus("Upload failed");
+    } finally {
+      setIsUploading(false);
+    }
+  }
+
+  async function loadDriveFiles() {
+    setError("");
+    setIsLoadingDrive(true);
+    setDocumentStatus("Loading Drive files");
+    try {
+      const response = await fetch(`${API_BASE}/documents/drive-files`, {
+        headers: authHeaders(),
+      });
+      const responseText = await response.text();
+      let data = {};
+      try {
+        data = JSON.parse(responseText);
+      } catch {
+        data = { detail: responseText || "Could not load Drive files" };
+      }
+      if (!response.ok) throw new Error(data.error || data.detail || "Could not load Drive files");
+      setDriveFiles(data.files || []);
+      setDocumentStatus(`Loaded ${(data.files || []).length} Drive files`);
+    } catch (err) {
+      setError(err.message);
+      setDocumentStatus("Drive load failed");
+    } finally {
+      setIsLoadingDrive(false);
+    }
+  }
+
+  async function ingestDriveFile(fileId) {
+    setError("");
+    setNotice("");
+    setIsIngestingDrive(true);
+    setDocumentStatus("Indexing Drive file");
+    try {
+      const response = await fetch(`${API_BASE}/documents/ingest-file`, {
+        method: "POST",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ file_id: fileId, matter_id: uploadMatterId }),
+      });
+      const responseText = await response.text();
+      let data = {};
+      try {
+        data = JSON.parse(responseText);
+      } catch {
+        data = { detail: responseText || "Drive ingest failed" };
+      }
+      if (!response.ok) throw new Error(data.error || data.detail || "Drive ingest failed");
+      setNotice(`Drive file indexed: ${data.file_id || fileId}.`);
+      setDocumentStatus(data.skipped ? "Drive file unchanged" : "Drive file indexed");
+      await loadDocuments();
+    } catch (err) {
+      setError(err.message);
+      setDocumentStatus("Drive ingest failed");
+    } finally {
+      setIsIngestingDrive(false);
+    }
+  }
+
+  async function ingestDriveFolder() {
+    setError("");
+    setNotice("");
+    setIsIngestingDrive(true);
+    setDocumentStatus("Indexing Drive folder");
+    try {
+      const response = await fetch(`${API_BASE}/documents/ingest-folder`, {
+        method: "POST",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ matter_id: uploadMatterId }),
+      });
+      const responseText = await response.text();
+      let data = {};
+      try {
+        data = JSON.parse(responseText);
+      } catch {
+        data = { detail: responseText || "Folder ingest failed" };
+      }
+      if (!response.ok) throw new Error(data.error || data.detail || "Folder ingest failed");
+      setNotice(`Folder ingest complete: ${data.ok || 0} of ${data.total || 0} files indexed.`);
+      setDocumentStatus("Folder ingest complete");
+      await loadDocuments();
+    } catch (err) {
+      setError(err.message);
+      setDocumentStatus("Folder ingest failed");
+    } finally {
+      setIsIngestingDrive(false);
+    }
+  }
+
   if (!token) {
     return (
       <LoginLanding
@@ -380,7 +553,28 @@ export default function ANKRagDashboard() {
       />
     ),
     History: <HistoryPanel history={history} restoreHistory={restoreHistory} />,
-    Documents: <SimpleList title="Indexed documents" rows={SAMPLE_DOCS} />,
+    Documents: (
+      <DocumentsPanel
+        documentStatus={documentStatus}
+        documents={documents}
+        driveFiles={driveFiles}
+        ingestDriveFile={ingestDriveFile}
+        ingestDriveFolder={ingestDriveFolder}
+        isIngestingDrive={isIngestingDrive}
+        isLoadingDocuments={isLoadingDocuments}
+        isLoadingDrive={isLoadingDrive}
+        loadDocuments={loadDocuments}
+        loadDriveFiles={loadDriveFiles}
+        setUploadAccessLevel={setUploadAccessLevel}
+        setUploadFile={setUploadFile}
+        setUploadMatterId={setUploadMatterId}
+        uploadAccessLevel={uploadAccessLevel}
+        uploadDocument={uploadDocument}
+        uploadFile={uploadFile}
+        uploadMatterId={uploadMatterId}
+        isUploading={isUploading}
+      />
+    ),
     Matters: <SimpleList title="Matter access" rows={SAMPLE_MATTERS} />,
     Team: <TeamPanel userLabel={userLabel} />,
     Settings: <SettingsPanel compactMode={compactMode} setCompactMode={setCompactMode} signOut={signOut} />,
@@ -475,7 +669,7 @@ export default function ANKRagDashboard() {
         <footer className="grid grid-cols-2 gap-3 border-t border-gray-200 bg-white px-5 py-3 md:grid-cols-4">
           {[
             { label: "Queries today", value: String(queryCount), accent: "text-blue-600", icon: BarChart3 },
-            { label: "Docs indexed", value: "RAG", accent: "text-gray-800", icon: BookOpenText },
+            { label: "Docs indexed", value: String(documents.length), accent: "text-gray-800", icon: BookOpenText },
             { label: "Last response", value: lastLatency ? `${lastLatency} s` : "-", accent: "text-green-600", icon: CheckCircle2 },
             { label: "Active user", value: "1", accent: "text-gray-800", icon: Users },
           ].map((metric) => (
@@ -547,6 +741,147 @@ function HistoryPanel({ history, restoreHistory }) {
           ))}
         </div>
       )}
+    </Panel>
+  );
+}
+
+function DocumentsPanel({
+  documentStatus,
+  documents,
+  driveFiles,
+  ingestDriveFile,
+  ingestDriveFolder,
+  isIngestingDrive,
+  isLoadingDocuments,
+  isLoadingDrive,
+  loadDocuments,
+  loadDriveFiles,
+  setUploadAccessLevel,
+  setUploadFile,
+  setUploadMatterId,
+  uploadAccessLevel,
+  uploadDocument,
+  uploadFile,
+  uploadMatterId,
+  isUploading,
+}) {
+  return (
+    <Panel title="Documents" subtitle="Indexed files and ingestion controls.">
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        <button onClick={loadDocuments} disabled={isLoadingDocuments} className="action-button">
+          {isLoadingDocuments ? <Loader2 className="animate-spin" size={13} /> : <RefreshCw size={13} />}
+          Refresh
+        </button>
+        <button onClick={loadDriveFiles} disabled={isLoadingDrive} className="action-button">
+          {isLoadingDrive ? <Loader2 className="animate-spin" size={13} /> : <FolderKanban size={13} />}
+          Drive files
+        </button>
+        <button onClick={ingestDriveFolder} disabled={isIngestingDrive} className="action-button">
+          {isIngestingDrive ? <Loader2 className="animate-spin" size={13} /> : <UploadCloud size={13} />}
+          Ingest folder
+        </button>
+        <span className="text-xs text-gray-500">{documentStatus}</span>
+      </div>
+
+      <form onSubmit={uploadDocument} className="mb-5 rounded-lg border border-gray-200 bg-white p-3">
+        <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_150px_150px_auto]">
+          <label className="block">
+            <span className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-gray-500">File</span>
+            <input
+              type="file"
+              onChange={(event) => setUploadFile(event.target.files?.[0] || null)}
+              className="block w-full text-xs text-gray-600 file:mr-3 file:rounded-md file:border-0 file:bg-gray-100 file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-gray-700 hover:file:bg-gray-200"
+            />
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-gray-500">Matter</span>
+            <input
+              value={uploadMatterId}
+              onChange={(event) => setUploadMatterId(event.target.value)}
+              placeholder="M-2024-118"
+              className="w-full rounded-md border border-gray-300 px-2 py-1.5 text-xs focus:border-blue-400 focus:outline-none"
+            />
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-gray-500">Access</span>
+            <select
+              value={uploadAccessLevel}
+              onChange={(event) => setUploadAccessLevel(event.target.value)}
+              className="w-full rounded-md border border-gray-300 px-2 py-1.5 text-xs focus:border-blue-400 focus:outline-none"
+            >
+              {[1, 2, 3, 4, 5].map((level) => (
+                <option key={level} value={level}>{level}</option>
+              ))}
+            </select>
+          </label>
+          <button
+            disabled={!uploadFile || isUploading}
+            className="self-end rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-gray-300"
+          >
+            {isUploading ? "Indexing" : "Upload"}
+          </button>
+        </div>
+      </form>
+
+      <div className="grid gap-4 xl:grid-cols-2">
+        <section>
+          <div className="mb-2 flex items-center justify-between">
+            <h2 className="text-xs font-semibold uppercase tracking-wide text-gray-500">Indexed documents</h2>
+            <span className="text-xs text-gray-400">{documents.length}</span>
+          </div>
+          {documents.length === 0 ? (
+            <EmptyState text="No indexed documents visible to this user." />
+          ) : (
+            <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
+              {documents.map((doc) => (
+                <div key={doc.file_id || doc.id} className="border-b border-gray-100 p-3 last:border-b-0">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="truncate text-sm font-medium text-gray-900">{doc.file_title || doc.file_id}</div>
+                      <div className="mt-1 text-xs text-gray-500">
+                        {doc.matter_id || "No matter"} - Level {doc.access_level || 1} - {formatDate(doc.ingested_at)}
+                      </div>
+                    </div>
+                    {doc.url && (
+                      <a href={doc.url} target="_blank" rel="noreferrer" className="text-xs font-medium text-blue-600 hover:text-blue-700">
+                        Open
+                      </a>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+
+        <section>
+          <div className="mb-2 flex items-center justify-between">
+            <h2 className="text-xs font-semibold uppercase tracking-wide text-gray-500">Drive files</h2>
+            <span className="text-xs text-gray-400">{driveFiles.length}</span>
+          </div>
+          {driveFiles.length === 0 ? (
+            <EmptyState text="Load Drive files to ingest from Google Drive." />
+          ) : (
+            <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
+              {driveFiles.map((file) => (
+                <div key={file.id} className="flex items-center justify-between gap-3 border-b border-gray-100 p-3 last:border-b-0">
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-medium text-gray-900">{file.name}</div>
+                    <div className="mt-1 truncate text-xs text-gray-500">{file.mimeType}</div>
+                  </div>
+                  <button
+                    onClick={() => ingestDriveFile(file.id)}
+                    disabled={isIngestingDrive}
+                    className="rounded-md border border-blue-200 px-2.5 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Ingest
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      </div>
     </Panel>
   );
 }

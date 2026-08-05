@@ -167,7 +167,7 @@ def _auth_ctx_from_header(authorization: str | None) -> tuple[dict, dict]:
     if not token:
         raise HTTPException(status_code=401, detail="UNAUTHORIZED: missing token")
     try:
-        payload = verify_jwt(token)
+        payload = _payload_from_token(token)
         ctx = build_user_ctx(payload, {}, {})
         rbac = build_rbac_block(ctx, {})
     except AuthError as e:
@@ -186,7 +186,7 @@ def _token_from_header(authorization: str | None) -> str:
 
 def _ctx_rbac_from_token(token: str, body: dict[str, Any] | None = None) -> tuple[dict, dict]:
     try:
-        payload = verify_jwt(token)
+        payload = _payload_from_token(token)
         ctx = build_user_ctx(payload, {}, body or {})
         rbac = build_rbac_block(ctx, body or {})
     except AuthError as exc:
@@ -194,6 +194,36 @@ def _ctx_rbac_from_token(token: str, body: dict[str, Any] | None = None) -> tupl
     except ValueError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     return ctx, rbac
+
+
+def _payload_from_token(token: str) -> dict[str, Any]:
+    """
+    Build a Supabase-style JWT payload.
+
+    Prefer local signature verification with SUPABASE_JWT_SECRET. If that secret
+    is stale or unavailable, fall back to Supabase Auth validation so freshly
+    issued access tokens still work for document management endpoints.
+    """
+    try:
+        return verify_jwt(token)
+    except AuthError as local_error:
+        try:
+            anon = make_anon_client()
+            response = anon.auth.get_user(token)
+            user = getattr(response, "user", None)
+            if not user:
+                raise local_error
+
+            app_metadata = getattr(user, "app_metadata", None) or {}
+            user_metadata = getattr(user, "user_metadata", None) or {}
+            return {
+                "sub": getattr(user, "id", None),
+                "email": getattr(user, "email", None),
+                "app_metadata": app_metadata,
+                "user_metadata": user_metadata,
+            }
+        except Exception as exc:
+            raise local_error from exc
 
 
 def _rbac_level(ctx: dict[str, Any], rbac: dict[str, Any]) -> int:
@@ -217,7 +247,7 @@ async def chat_webhook(
     if authorization:
         token = authorization.replace("Bearer ", "").replace("bearer ", "").strip()
         try:
-            payload = verify_jwt(token)
+            payload = _payload_from_token(token)
         except AuthError as e:
             raise HTTPException(status_code=401, detail=str(e))
         ctx = build_user_ctx(payload, raw_headers, body)
@@ -231,7 +261,7 @@ async def chat_webhook(
                 raise HTTPException(status_code=401, detail="UNAUTHORIZED: missing credentials") from None
             user_client, token = await _resolve_user_client(auth_inner)  # type: ignore
         try:
-            payload = verify_jwt(token)
+            payload = _payload_from_token(token)
         except AuthError as e:
             raise HTTPException(status_code=401, detail=str(e))
         ctx = build_user_ctx(payload, raw_headers, body)
@@ -278,7 +308,7 @@ async def chat_webhook_stream(
     if authorization:
         token = authorization.replace("Bearer ", "").replace("bearer ", "").strip()
         try:
-            payload = verify_jwt(token)
+            payload = _payload_from_token(token)
         except AuthError as e:
             raise HTTPException(status_code=401, detail=str(e))
         ctx = build_user_ctx(payload, raw_headers, body)
@@ -292,7 +322,7 @@ async def chat_webhook_stream(
                 raise HTTPException(status_code=401, detail="UNAUTHORIZED: missing credentials") from None
             user_client, token = await _resolve_user_client(auth_inner)  # type: ignore
         try:
-            payload = verify_jwt(token)
+            payload = _payload_from_token(token)
         except AuthError as e:
             raise HTTPException(status_code=401, detail=str(e))
         ctx = build_user_ctx(payload, raw_headers, body)
