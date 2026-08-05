@@ -19,3 +19,7 @@ def make_user_client(access_token: str) -> Client:
     client = create_client(settings.supabase_url, settings.supabase_anon_key)
     client.postgrest.auth(access_token)
     return client
+
+
+def make_service_client() -> Client:
+    return create_client(settings.supabase_url, settings.supabase_service_role_key)

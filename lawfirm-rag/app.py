@@ -1,22 +1,24 @@
 from __future__ import annotations
 
+import os
+import tempfile
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, Header, HTTPException, Request, Response
+from fastapi import FastAPI, File, Header, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-import os
 
 from agents.rag_agent import run_chat, stream_chat
 from auth.jwt_validator import AuthError, build_user_ctx, verify_jwt
 from rbac.checker import build_rbac_block
+from rbac.role_matrix import ROLE_MATRIX
 from rls.access_context import set_access_context
 from rls.filter_builder import build_rls_filter
-from search.supabase_client import make_anon_client, make_user_client
-from sessions.manager import build_session
+from search.supabase_client import make_anon_client, make_service_client, make_user_client
+from sessions.manager import build_session, list_user_sessions
 from config import settings
 
 # LangSmith / LangChain tracing environment (optional). If an API key is set
@@ -66,6 +68,7 @@ class LoginResponse(BaseModel):
     token_type: str | None = None
     user_id: str | None = None
     role: str | None = None
+    access_level: int = 1
 
 
 class ChatBody(BaseModel):
@@ -77,7 +80,10 @@ class ChatBody(BaseModel):
 
 
 class ChatResponse(BaseModel):
-    output: str
+    answer: str
+    output: str | None = None
+    sources: list[dict[str, str]] = []
+    session_id: str
 
 
 class DriveFileIngestBody(BaseModel):
@@ -92,6 +98,8 @@ async def login(body: LoginBody) -> LoginResponse:
         res = client.auth.sign_in_with_password({"email": body.email, "password": body.password})
         sess = res.session if hasattr(res, "session") else res
         user = res.user if hasattr(res, "user") else None
+        user_metadata = (getattr(user, "user_metadata", {}) or {}) if user else {}
+        app_metadata = (getattr(user, "app_metadata", {}) or {}) if user else {}
         access = getattr(sess, "access_token", "") or ""
         refresh = getattr(sess, "refresh_token", "") or ""
         return LoginResponse(
@@ -100,7 +108,13 @@ async def login(body: LoginBody) -> LoginResponse:
             expires_in=getattr(sess, "expires_in", None),
             token_type=getattr(sess, "token_type", None),
             user_id=getattr(user, "id", None) if user else None,
-            role=(getattr(user, "app_metadata", {}) or {}).get("role") if user else None,
+            role=app_metadata.get("role") if user else None,
+            access_level=int(
+                user_metadata.get("access_level")
+                or app_metadata.get("access_level")
+                or (ROLE_MATRIX.get(app_metadata.get("role") or "", {}) or {}).get("level")
+                or 1
+            ),
         )
     except Exception as exc:
         message = str(exc).strip()
@@ -156,6 +170,29 @@ def _auth_ctx_from_header(authorization: str | None) -> tuple[dict, dict]:
     return ctx, rbac
 
 
+def _token_from_header(authorization: str | None) -> str:
+    token = (authorization or "").replace("Bearer ", "").replace("bearer ", "").strip()
+    if not token:
+        raise HTTPException(status_code=401, detail="Missing token")
+    return token
+
+
+def _ctx_rbac_from_token(token: str, body: dict[str, Any] | None = None) -> tuple[dict, dict]:
+    try:
+        payload = verify_jwt(token)
+        ctx = build_user_ctx(payload, {}, body or {})
+        rbac = build_rbac_block(ctx, body or {})
+    except AuthError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    return ctx, rbac
+
+
+def _rbac_level(ctx: dict[str, Any], rbac: dict[str, Any]) -> int:
+    return max(int(ctx.get("access_level") or 1), int((rbac.get("perms") or {}).get("level") or 1))
+
+
 def _require_ingest(authorization: str | None) -> tuple[dict, dict]:
     ctx, rbac = _auth_ctx_from_header(authorization)
     if not (rbac.get("perms") or {}).get("ingest"):
@@ -205,13 +242,18 @@ async def chat_webhook(
     if not chat_input:
         raise HTTPException(status_code=400, detail="BAD_REQUEST: missing chat input")
 
-    output = run_chat(
+    result = await run_chat(
         session_id=session["session_id"],
         system_prefix=rbac["system_prompt_prefix"],
         chat_input=chat_input,
         user_client=user_client,
     )
-    return ChatResponse(output=output)
+    return ChatResponse(
+        answer=result["answer"],
+        output=result["answer"],
+        sources=result["sources"],
+        session_id=session["session_id"],
+    )
 
 
 @app.post("/lawfirm-chat-stream")
@@ -269,10 +311,126 @@ async def chat_webhook_stream(
             chat_input=chat_input,
             user_client=user_client,
         ):
-            yield f"data: {token}\n\n"
+            token_text = str(token)
+            if token_text.startswith("data: "):
+                yield token_text
+            else:
+                yield f"data: {token_text}\n\n"
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+@app.post("/documents/upload")
+async def upload_document(
+    file: UploadFile = File(...),
+    matter_id: str = "",
+    access_level: int = 1,
+    authorization: str | None = Header(default=None),
+) -> JSONResponse:
+    token = _token_from_header(authorization)
+    ctx, rbac = _ctx_rbac_from_token(token)
+    if _rbac_level(ctx, rbac) < 3:
+        raise HTTPException(status_code=403, detail="Insufficient permissions to upload")
+
+    suffix = os.path.splitext(file.filename or "")[1]
+    contents = await file.read()
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        tmp.write(contents)
+        tmp_path = tmp.name
+
+    try:
+        from ingest.store import upsert_file
+
+        safe_filename = file.filename or "uploaded_document"
+        file_id = f"upload_{ctx['user_id']}_{safe_filename}"
+        result = await upsert_file(
+            file_id=file_id,
+            file_title=safe_filename,
+            file_url="",
+            mime_type=file.content_type or "application/octet-stream",
+            raw_bytes=contents,
+            access_level=access_level,
+            matter_id=matter_id,
+        )
+        return JSONResponse({"status": "ok", "chunks": result.get("chunks", 0), "file_id": file_id})
+    finally:
+        os.unlink(tmp_path)
+
+
+@app.get("/documents")
+async def list_documents(
+    authorization: str | None = Header(default=None),
+) -> JSONResponse:
+    token = _token_from_header(authorization)
+    _ctx_rbac_from_token(token)
+    user_client = make_user_client(token)
+
+    result = (
+        user_client.table("document_metadata")
+        .select("file_id, file_title, url, mime_type, ingested_at, access_level, matter_id")
+        .order("ingested_at", desc=True)
+        .limit(100)
+        .execute()
+    )
+    return JSONResponse({"documents": result.data or []})
+
+
+@app.get("/sessions")
+async def list_sessions(
+    authorization: str | None = Header(default=None),
+) -> JSONResponse:
+    token = _token_from_header(authorization)
+    ctx, _rbac = _ctx_rbac_from_token(token)
+    sessions = await list_user_sessions(ctx["user_id"])
+    return JSONResponse({"sessions": sessions})
+
+
+@app.get("/admin/users")
+async def admin_list_users(authorization: str | None = Header(default=None)) -> JSONResponse:
+    token = _token_from_header(authorization)
+    ctx, rbac = _ctx_rbac_from_token(token)
+    if _rbac_level(ctx, rbac) < 5:
+        raise HTTPException(status_code=403, detail="Admin only")
+
+    svc = make_service_client()
+    users = svc.auth.admin.list_users()
+    return JSONResponse({
+        "users": [
+            {
+                "id": u.id,
+                "email": u.email,
+                "created_at": str(u.created_at),
+                "access_level": (getattr(u, "user_metadata", {}) or {}).get("access_level", 1),
+            }
+            for u in (getattr(users, "users", []) or [])
+        ]
+    })
+
+
+@app.post("/admin/users")
+async def admin_create_user(
+    request: Request,
+    authorization: str | None = Header(default=None),
+) -> JSONResponse:
+    token = _token_from_header(authorization)
+    ctx, rbac = _ctx_rbac_from_token(token)
+    if _rbac_level(ctx, rbac) < 5:
+        raise HTTPException(status_code=403, detail="Admin only")
+
+    body = await request.json()
+    email = body.get("email", "")
+    password = body.get("password", "")
+    access_level = int(body.get("access_level", 1))
+
+    svc = make_service_client()
+    user = svc.auth.admin.create_user({
+        "email": email,
+        "password": password,
+        "email_confirm": True,
+        "user_metadata": {"access_level": access_level},
+    })
+    return JSONResponse({"id": user.user.id, "email": user.user.email})
 
 
 @app.get("/documents/drive-files")

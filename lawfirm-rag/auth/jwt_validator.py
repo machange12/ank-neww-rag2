@@ -63,6 +63,7 @@ def build_user_ctx(
     """Build the _user_ctx dict that mirrors the n8n JWT_Validator_Chat node output."""
     now = math.floor(time.time())
     meta: dict = payload.get("app_metadata") or {}
+    user_meta: dict = payload.get("user_metadata") or {}
 
     ip = (
         headers.get("x-forwarded-for")
@@ -80,7 +81,7 @@ def build_user_ctx(
         "email":        payload.get("email") or "unknown@ak.law",
         "role":         meta.get("role") or "associate",
         "session_id":   session_id,
-        "access_level": meta.get("access_level") or 1,
+        "access_level": user_meta.get("access_level") or meta.get("access_level") or 1,
         "matter_ids":   meta.get("matter_ids") or [],
         "ip_address":   ip,
         "token_iat":    payload.get("iat") or now,
