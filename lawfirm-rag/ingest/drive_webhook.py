@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import hmac
 import logging
 from typing import Any
+
+from fastapi import HTTPException
 
 from config import settings
 from ingest.downloader import download_file, list_folder_files
@@ -11,11 +14,24 @@ from search.service_client import make_service_client
 logger = logging.getLogger(__name__)
 
 
+def verify_drive_webhook(request_headers: dict, settings) -> None:
+    """Verify Google Drive push notifications using X-Goog-Channel-Token."""
+    token = (
+        request_headers.get("X-Goog-Channel-Token")
+        or request_headers.get("x-goog-channel-token")
+        or ""
+    )
+    expected = settings.drive_webhook_secret or ""
+    if not token or not hmac.compare_digest(token, expected):
+        raise HTTPException(status_code=403, detail="Invalid Google Drive webhook token")
+
+
 async def handle_drive_event(
     file_id: str,
     event: str,
     access_level: int | None = None,
     matter_id: str | None = None,
+    request_headers: dict | None = None,
 ) -> dict[str, Any]:
     """
     Handle a single Google Drive push notification.
@@ -31,6 +47,9 @@ async def handle_drive_event(
     (handled in the Item 5 upgrade) — re-classify anything ingested via this
     fallback path.
     """
+    if request_headers is not None:
+        verify_drive_webhook(request_headers, settings)
+
     if event in ("remove", "trash"):
         client = make_service_client()
         client.rpc("delete_documents_by_file_id", {"p_file_id": file_id}).execute()

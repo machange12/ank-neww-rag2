@@ -63,24 +63,25 @@ async def upsert_file(
         logger.info("skipping unchanged file file_id=%s", file_id)
         return {"file_id": file_id, "chunks": 0, "skipped": True}
 
-    text = extract_text(raw_bytes, mime_type)
+    text, total_pages = extract_text(raw_bytes, mime_type)
     chunks = chunk_text(text)
     if not chunks:
         logger.warning("No chunks produced for file_id=%s", file_id)
         return {"file_id": file_id, "chunks": 0}
 
-    embeddings = embed_chunks(chunks)
+    embeddings = embed_chunks([chunk.text for chunk in chunks])
 
     # Delete old vectors for this file (idempotent re-ingest)
     client.rpc("delete_documents_by_file_id", {"p_file_id": file_id}).execute()
 
     ingested_at = datetime.now(timezone.utc).isoformat()
     total_chunks = len(chunks)
+    chunks_per_page = max(1, total_chunks // max(1, total_pages))
 
     # Insert new document rows (one row per chunk). Include richer metadata per chunk.
     rows = [
         {
-            "content":   chunk,
+            "content": chunk.text,
             "embedding": embedding,
             "metadata": {
                 "file_id": file_id,
@@ -90,13 +91,15 @@ async def upsert_file(
                 "matter_id": matter_id,
                 "mime_type": mime_type,
                 "ingested_at": ingested_at,
-                "chunk_index": i,
+                "section_heading": chunk.section_heading,
+                "chunk_index": chunk.chunk_index,
                 "total_chunks": total_chunks,
+                "page_number": chunk.chunk_index // chunks_per_page,
             },
             "access_level": access_level,
             "matter_id": matter_id,
         }
-        for i, (chunk, embedding) in enumerate(zip(chunks, embeddings))
+        for chunk, embedding in zip(chunks, embeddings)
     ]
     client.table("documents").insert(rows).execute()
 
