@@ -25,7 +25,10 @@ create table if not exists public.document_metadata (
   file_title  text,
   url         text,
   mime_type   text,
-  ingested_at timestamptz not null default now()
+  ingested_at timestamptz not null default now(),
+  content_hash text,
+  access_level int not null default 1,
+  matter_id text not null default ''
 );
 
 -- Chat memory (LangChain PostgresChatMessageHistory)

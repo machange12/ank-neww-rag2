@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import asyncio
+import json
 from typing import Any, List
 
 from langchain.agents import AgentExecutor, create_openai_functions_agent
@@ -93,12 +95,39 @@ def _make_retriever(user_client: Any, llm: Any) -> Any:
     return multi_retriever
 
 
-def run_chat(
+def _sources_from_docs(docs: list[Any]) -> list[dict[str, str]]:
+    sources: list[dict[str, str]] = []
+    for doc in docs:
+        meta = getattr(doc, "metadata", {}) or {}
+        url = meta.get("url") or meta.get("file_url", "")
+        title = meta.get("file_title") or meta.get("title") or "Unknown document"
+        file_id = meta.get("file_id", "")
+        if url and not any(source["url"] == url for source in sources):
+            sources.append({
+                "title": title,
+                "url": url,
+                "file_id": file_id,
+            })
+    return sources
+
+
+def _sources_from_intermediate_steps(result: dict[str, Any]) -> list[dict[str, str]]:
+    sources: list[dict[str, str]] = []
+    for step in result.get("intermediate_steps", []):
+        if isinstance(step, tuple) and len(step) == 2:
+            docs = step[1] if isinstance(step[1], list) else []
+            for source in _sources_from_docs(docs):
+                if not any(existing["url"] == source["url"] for existing in sources):
+                    sources.append(source)
+    return sources[:5]
+
+
+async def run_chat(
     session_id: str,
     system_prefix: str,
     chat_input: str,
     user_client: Any,
-) -> str:
+) -> dict[str, Any]:
     """
     Run one turn of the RAG chat agent.
     - Retrieves via hybrid_search_rls (if present) with RLS; falls back to vector similarity.
@@ -114,6 +143,14 @@ def run_chat(
     )
 
     retriever = _make_retriever(user_client, llm)
+    retrieved_sources: list[dict[str, str]] = []
+    try:
+        docs = await asyncio.to_thread(retriever.invoke, chat_input)
+        if isinstance(docs, list):
+            retrieved_sources = _sources_from_docs(docs)[:5]
+    except Exception as exc:
+        logger.debug("source pre-retrieval failed: %s", exc)
+
     search_tool = create_retriever_tool(
         retriever,
         name="search_law_firm_documents",
@@ -151,14 +188,18 @@ def run_chat(
         memory=memory,
         verbose=False,
         handle_parsing_errors=True,
+        return_intermediate_steps=True,
     )
 
-    result = executor.invoke({
+    result = await executor.ainvoke({
         "input": chat_input,
         "system_prefix": system_prefix,
     })
 
-    return result.get("output") or ""
+    return {
+        "answer": result.get("output", ""),
+        "sources": _sources_from_intermediate_steps(result) or retrieved_sources,
+    }
 
 
 async def stream_chat(
@@ -182,13 +223,23 @@ async def stream_chat(
         streaming=True,
     )
 
+    retriever = _make_retriever(user_client, llm)
+    sources: list[dict[str, str]] = []
+    try:
+        docs = await asyncio.to_thread(retriever.invoke, chat_input)
+        if isinstance(docs, list):
+            sources = _sources_from_docs(docs)[:5]
+    except Exception as exc:
+        logger.debug("streaming retrieval failed: %s", exc)
+
     system_text = RAG_SYSTEM_TEMPLATE.format(system_prefix=system_prefix)
     sys_msg = SystemMessage(content=system_text)
     human_msg = HumanMessage(content=chat_input)
 
     try:
         async for token in llm.astream([sys_msg, human_msg]):
-            yield token
+            yield getattr(token, "content", token)
+        yield f"data: {json.dumps({'type': 'sources', 'sources': sources})}\n\n"
     except Exception as exc:
         logger.debug("streaming LLM failed: %s", exc)
         return
