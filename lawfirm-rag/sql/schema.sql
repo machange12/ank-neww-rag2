@@ -27,9 +27,13 @@ create table if not exists public.document_metadata (
   mime_type   text,
   ingested_at timestamptz not null default now(),
   content_hash text,
-  access_level int not null default 1,
-  matter_id text not null default ''
+  access_level int         not null default 1,
+  matter_id    text        not null default ''
 );
+create index if not exists document_metadata_file_id_idx
+  on public.document_metadata (file_id);
+create index if not exists document_metadata_access_matter_idx
+  on public.document_metadata (access_level, matter_id);
 
 -- Chat memory (LangChain PostgresChatMessageHistory)
 create table if not exists public.chat_memory (
