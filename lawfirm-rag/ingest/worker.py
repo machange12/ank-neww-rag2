@@ -7,7 +7,8 @@ from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from cleanup.orphan_finder import run_cleanup
-from ingest.drive_webhook import handle_drive_event
+from config import settings
+from ingest.drive_webhook import handle_drive_event, verify_drive_webhook
 
 logger = logging.getLogger(__name__)
 app = FastAPI(title="Law Firm Ingest Worker", version="2.3456")
@@ -45,6 +46,9 @@ async def drive_webhook(
     """
     state = x_goog_resource_state or ""
     resource_id = x_goog_resource_id or ""
+    request_headers = dict(request.headers)
+
+    verify_drive_webhook(request_headers, settings)
 
     if state == "sync":
         return JSONResponse({"status": "sync_ignored"}, status_code=200)
@@ -59,7 +63,11 @@ async def drive_webhook(
         raise HTTPException(status_code=400, detail="Missing file_id")
 
     logger.info("Drive event: state=%s file_id=%s", state, file_id)
-    result = await handle_drive_event(file_id=file_id, event=state)
+    result = await handle_drive_event(
+        file_id=file_id,
+        event=state,
+        request_headers=request_headers,
+    )
     return JSONResponse(result, status_code=200)
 
 

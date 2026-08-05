@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     google_refresh_token: str = ""
 
     drive_folder_id: str = "1btpYIgt5X9udhk6ueM8rapf5UqbPyANp"
+    drive_webhook_secret: str = ""
 
     embedding_model: str = "text-embedding-3-small"
     embedding_dim: int = 1536

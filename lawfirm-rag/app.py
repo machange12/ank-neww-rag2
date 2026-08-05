@@ -43,6 +43,13 @@ if (STATIC_DIR / "assets").exists():
     app.mount("/assets", StaticFiles(directory=STATIC_DIR / "assets"), name="assets")
 
 
+@app.on_event("startup")
+async def startup_event() -> None:
+    from ingest.scheduler import start_scheduler
+
+    start_scheduler()
+
+
 @app.get("/healthz")
 async def healthz() -> dict[str, str]:
     return {"status": "ok"}
