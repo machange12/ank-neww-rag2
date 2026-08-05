@@ -1,21 +1,46 @@
 from __future__ import annotations
 
 import io
+import re
 import zipfile
 import xml.etree.ElementTree as ET
 
 
-def extract_text(raw_bytes: bytes, mime_type: str) -> str:
-    """Extract plain text from raw file bytes."""
+def clean_text(text: str) -> str:
+    """Clean extraction artifacts common in PDFs and legal documents."""
+    lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    counts: dict[str, int] = {}
+    for line in lines:
+        stripped = line.strip()
+        if stripped:
+            counts[stripped] = counts.get(stripped, 0) + 1
+
+    without_repeated = [
+        line
+        for line in lines
+        if not line.strip() or counts.get(line.strip(), 0) < 3
+    ]
+    cleaned = "\n".join(without_repeated)
+
+    cleaned = re.sub(r"(\w)-\n(\w)", r"\1 \2", cleaned)
+    cleaned = re.sub(r"(?im)^\s*(?:\d+|page\s+\d+\s+of\s+\d+|-\s*\d+\s*-)\s*$", "", cleaned)
+    cleaned = re.sub(r"[ \t\f\v]+", " ", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    return cleaned.strip()
+
+
+def extract_text(raw_bytes: bytes, mime_type: str) -> tuple[str, int]:
+    """Extract cleaned plain text and page count from raw file bytes."""
     if mime_type == "application/pdf":
-        return _extract_pdf(raw_bytes)
+        text, total_pages = _extract_pdf(raw_bytes)
+        return clean_text(text), total_pages
     if mime_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
-        return _extract_docx(raw_bytes)
+        return clean_text(_extract_docx(raw_bytes)), 1
     # Google Docs exported as text/plain, and any other text type
-    return raw_bytes.decode("utf-8", errors="replace")
+    return clean_text(raw_bytes.decode("utf-8", errors="replace")), 1
 
 
-def _extract_pdf(raw_bytes: bytes) -> str:
+def _extract_pdf(raw_bytes: bytes) -> tuple[str, int]:
     from pypdf import PdfReader
 
     reader = PdfReader(io.BytesIO(raw_bytes))
@@ -23,7 +48,7 @@ def _extract_pdf(raw_bytes: bytes) -> str:
     for page in reader.pages:
         text = page.extract_text() or ""
         pages.append(text)
-    return "\n\n".join(pages)
+    return "\n\n".join(pages), len(reader.pages)
 
 
 def _extract_docx(raw_bytes: bytes) -> str:

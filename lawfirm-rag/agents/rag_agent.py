@@ -33,6 +33,21 @@ CORE BEHAVIOUR RULES:
 5. Never speculate beyond retrieved content.
 """
 
+RAG_STREAM_TEMPLATE = """{system_prefix}
+
+You are a secure legal knowledge assistant for Anjarwalla & Khanna Advocates.
+
+CORE BEHAVIOUR RULES:
+1. Answer ONLY from the retrieved context below — never from general knowledge.
+2. For greetings or small talk: respond briefly without referencing the knowledge base.
+3. Cite sources with [Title | Matter ID] when referencing retrieved content.
+4. If the context is insufficient say: "I could not find an answer in the firm's document repository."
+5. Never speculate beyond the retrieved content.
+
+RETRIEVED CONTEXT:
+{context}
+"""
+
 
 def _make_vector_store(user_client: Any) -> SupabaseVectorStore:
     embeddings = OpenAIEmbeddings(
@@ -67,7 +82,6 @@ class HybridRetriever(BaseRetriever):
 
 def _make_retriever(user_client: Any, llm: Any) -> Any:
     store = _make_vector_store(user_client)
-    base_retriever = store.as_retriever(search_kwargs={"k": settings.retrieve_top_k})
 
     # Use the hybrid retriever that prefers the RPC-based fusion search
     hybrid_retriever = HybridRetriever(user_client=user_client, store=store)
@@ -93,6 +107,25 @@ def _make_retriever(user_client: Any, llm: Any) -> Any:
         )
 
     return multi_retriever
+
+
+def _build_context_string(docs: list[Any]) -> str:
+    """Build a formatted context string from retrieved documents to inject into the prompt."""
+    if not docs:
+        return "No relevant documents found."
+    parts = []
+    for i, doc in enumerate(docs, 1):
+        meta = getattr(doc, "metadata", {}) or {}
+        title = meta.get("file_title") or meta.get("title") or "Unknown document"
+        matter_id = meta.get("matter_id", "")
+        section = meta.get("section_heading", "")
+        header = f"[{i}] {title}"
+        if matter_id:
+            header += f" | Matter: {matter_id}"
+        if section:
+            header += f" | {section}"
+        parts.append(f"{header}\n{doc.page_content}")
+    return "\n\n---\n\n".join(parts)
 
 
 def _sources_from_docs(docs: list[Any]) -> list[dict[str, str]]:
@@ -122,6 +155,31 @@ def _sources_from_intermediate_steps(result: dict[str, Any]) -> list[dict[str, s
     return sources[:5]
 
 
+def _log_retrieval(
+    session_id: str,
+    query: str,
+    docs: list[Any],
+    reranked: bool = False,
+) -> None:
+    """Log retrieval quality info for each query."""
+    top_chunks = []
+    for doc in docs[:5]:
+        meta = getattr(doc, "metadata", {}) or {}
+        top_chunks.append({
+            "file_id": meta.get("file_id", ""),
+            "chunk_index": meta.get("chunk_index", ""),
+            "section": meta.get("section_heading", ""),
+        })
+    logger.info(
+        "retrieval | session=%s | query=%r | docs_retrieved=%d | cohere_reranked=%s | top_chunks=%s",
+        session_id,
+        query,
+        len(docs),
+        reranked,
+        json.dumps(top_chunks),
+    )
+
+
 async def run_chat(
     session_id: str,
     system_prefix: str,
@@ -147,6 +205,12 @@ async def run_chat(
     try:
         docs = await asyncio.to_thread(retriever.invoke, chat_input)
         if isinstance(docs, list):
+            _log_retrieval(
+                session_id=session_id,
+                query=chat_input,
+                docs=docs,
+                reranked=bool(settings.cohere_api_key),
+            )
             retrieved_sources = _sources_from_docs(docs)[:5]
     except Exception as exc:
         logger.debug("source pre-retrieval failed: %s", exc)
@@ -211,9 +275,10 @@ async def stream_chat(
     """
     Async generator that yields tokens from the LLM as they arrive.
 
-    This streaming path mirrors the run_chat prompt construction but currently
-    streams the LLM output directly. Retrieval and tool-based executions are
-    still handled in the standard (non-streaming) path via run_chat.
+    FIX: Retrieved docs are now built into a context string and injected
+    into the system message before streaming. Previously docs were fetched
+    but never added to the prompt, meaning the LLM streamed answers with
+    no grounding — pure hallucination.
     """
     llm = ChatOpenAI(
         model=settings.chat_model,
@@ -224,15 +289,29 @@ async def stream_chat(
     )
 
     retriever = _make_retriever(user_client, llm)
+    docs: list[Any] = []
     sources: list[dict[str, str]] = []
+
     try:
         docs = await asyncio.to_thread(retriever.invoke, chat_input)
         if isinstance(docs, list):
+            _log_retrieval(
+                session_id=session_id,
+                query=chat_input,
+                docs=docs,
+                reranked=bool(settings.cohere_api_key),
+            )
             sources = _sources_from_docs(docs)[:5]
     except Exception as exc:
         logger.debug("streaming retrieval failed: %s", exc)
 
-    system_text = RAG_SYSTEM_TEMPLATE.format(system_prefix=system_prefix)
+    # Build context string from retrieved docs and inject into system message
+    context = _build_context_string(docs)
+    system_text = RAG_STREAM_TEMPLATE.format(
+        system_prefix=system_prefix,
+        context=context,
+    )
+
     sys_msg = SystemMessage(content=system_text)
     human_msg = HumanMessage(content=chat_input)
 
