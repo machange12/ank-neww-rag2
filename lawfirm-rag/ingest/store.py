@@ -108,6 +108,8 @@ async def upsert_file(
         "mime_type":   mime_type,
         "ingested_at": ingested_at,
         "content_hash": content_hash,
+        "access_level": access_level,
+        "matter_id": matter_id,
     }, on_conflict="file_id").execute()
 
     logger.info("Ingested file_id=%s chunks=%d", file_id, len(chunks))
