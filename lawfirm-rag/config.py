@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     postgres_dsn: str = ""
 
     openai_api_key: str = ""
+    groq_api_key: str = ""
     cohere_api_key: str = ""
 
     google_oauth_client_id: str = ""
@@ -30,9 +31,9 @@ class Settings(BaseSettings):
     drive_folder_id: str = "1btpYIgt5X9udhk6ueM8rapf5UqbPyANp"
     drive_webhook_secret: str = ""
 
-    embedding_model: str = "text-embedding-3-small"
+    embedding_model: str = "nomic-embed-text"
     embedding_dim: int = 1536
-    chat_model: str = "gpt-4.1-mini"
+    chat_model: str = "llama-3.3-70b-versatile"
     chat_max_tokens: int = 4096
     chunk_size: int = 750
     chunk_overlap: int = 200

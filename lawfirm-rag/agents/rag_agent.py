@@ -5,19 +5,21 @@ import asyncio
 import json
 from typing import Any, List
 
-from langchain.agents import AgentExecutor, create_openai_functions_agent
-from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain.tools.retriever import create_retriever_tool
+from langchain_classic.agents import AgentExecutor, create_tool_calling_agent
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.tools.retriever import create_retriever_tool
 from langchain_cohere import CohereRerank
-from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_postgres import PostgresChatMessageHistory
-from langchain.memory import ConversationBufferWindowMemory
+from langchain_classic.memory import ConversationBufferWindowMemory
 from langchain_community.vectorstores import SupabaseVectorStore
-from langchain.schema import BaseRetriever, Document, SystemMessage, HumanMessage
-from langchain.retrievers.multi_query import MultiQueryRetriever
+from langchain_core.retrievers import BaseRetriever
+from langchain_core.documents import Document
+from langchain_core.messages import SystemMessage, HumanMessage
+from langchain_classic.retrievers.multi_query import MultiQueryRetriever
 
 from search.hybrid import hybrid_search
 from config import settings
+from providers import make_chat_llm, make_embeddings
 
 logger = logging.getLogger(__name__)
 
@@ -50,10 +52,7 @@ RETRIEVED CONTEXT:
 
 
 def _make_vector_store(user_client: Any) -> SupabaseVectorStore:
-    embeddings = OpenAIEmbeddings(
-        model=settings.embedding_model,
-        openai_api_key=settings.openai_api_key,
-    )
+    embeddings = make_embeddings()
     return SupabaseVectorStore(
         client=user_client,
         embedding=embeddings,
@@ -69,7 +68,7 @@ class HybridRetriever(BaseRetriever):
         self.user_client = user_client
         self.store = store
 
-    def get_relevant_documents(self, query: str) -> List[Document]:
+    def _get_relevant_documents(self, query: str) -> List[Document]:
         try:
             docs = hybrid_search(self.user_client, query, match_count=settings.retrieve_top_k)
         except Exception:
@@ -100,7 +99,7 @@ def _make_retriever(user_client: Any, llm: Any) -> Any:
             top_n=5,
             model="rerank-english-v3.0",
         )
-        from langchain.retrievers import ContextualCompressionRetriever
+        from langchain_classic.retrievers import ContextualCompressionRetriever
         return ContextualCompressionRetriever(
             base_compressor=compressor,
             base_retriever=multi_retriever,
@@ -193,12 +192,7 @@ async def run_chat(
     - Reranks with Cohere if COHERE_API_KEY is set.
     - Stores conversation in Postgres chat_memory table.
     """
-    llm = ChatOpenAI(
-        model=settings.chat_model,
-        temperature=0,
-        max_tokens=settings.chat_max_tokens,
-        openai_api_key=settings.openai_api_key,
-    )
+    llm = make_chat_llm(streaming=False)
 
     retriever = _make_retriever(user_client, llm)
     retrieved_sources: list[dict[str, str]] = []
@@ -245,7 +239,7 @@ async def run_chat(
         k=settings.context_window,
     )
 
-    agent = create_openai_functions_agent(llm=llm, tools=[search_tool], prompt=prompt)
+    agent = create_tool_calling_agent(llm=llm, tools=[search_tool], prompt=prompt)
     executor = AgentExecutor(
         agent=agent,
         tools=[search_tool],
@@ -280,13 +274,7 @@ async def stream_chat(
     but never added to the prompt, meaning the LLM streamed answers with
     no grounding — pure hallucination.
     """
-    llm = ChatOpenAI(
-        model=settings.chat_model,
-        temperature=0,
-        max_tokens=settings.chat_max_tokens,
-        openai_api_key=settings.openai_api_key,
-        streaming=True,
-    )
+    llm = make_chat_llm(streaming=True)
 
     retriever = _make_retriever(user_client, llm)
     docs: list[Any] = []

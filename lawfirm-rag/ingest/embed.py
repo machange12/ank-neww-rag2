@@ -3,10 +3,10 @@ from __future__ import annotations
 import re
 from typing import NamedTuple
 
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_openai import OpenAIEmbeddings
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from config import settings
+from providers import make_embeddings
 
 
 # Legal document separators ordered from largest structural unit to smallest.
@@ -113,9 +113,6 @@ def chunk_text(text: str) -> list[TextChunk]:
 
 
 def embed_chunks(chunks: list[str]) -> list[list[float]]:
-    """Embed a list of text strings using OpenAI embeddings."""
-    embedder = OpenAIEmbeddings(
-        model=settings.embedding_model,
-        openai_api_key=settings.openai_api_key,
-    )
+    """Embed a list of text strings (Groq/HuggingFace nomic, or OpenAI fallback)."""
+    embedder = make_embeddings()
     return embedder.embed_documents(chunks)
