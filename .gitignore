@@ -4,3 +4,4 @@ __pycache__/
 *.pyc
 frontend/node_modules/
 uvicorn*.log
+*.pyo
