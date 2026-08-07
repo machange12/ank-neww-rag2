@@ -5,7 +5,7 @@ from typing import Any, List
 
 from langchain_core.documents import Document
 from config import settings
-from providers import make_embeddings
+from providers import get_embeddings
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +17,7 @@ def hybrid_search(client: Any, query_text: str, match_count: int = 20, rrf_k: in
     fall back to pure vector similarity.
     """
     try:
-        embedder = make_embeddings()
+        embedder = get_embeddings()
         # Prefer embed_query when available
         try:
             query_embedding = embedder.embed_query(query_text)

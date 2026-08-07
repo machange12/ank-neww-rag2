@@ -8,30 +8,42 @@ HUGGINGFACE_EMBEDDING_MODEL = "nomic-ai/nomic-embed-text-v1.5"
 OPENAI_EMBEDDING_MODEL = "text-embedding-3-small"
 OPENAI_CHAT_MODEL = "gpt-4.1-mini"
 
+_embeddings: Any = None
 
-def make_embeddings() -> Any:
-    """
-    Backward-compatible embeddings factory.
 
-    - If OPENAI_API_KEY is set, use OpenAI embeddings (keeps existing setups
-      working and matches the vector(1536) column).
-    - Otherwise fall back to a free, locally-run HuggingFace embedder
-      (nomic-embed-text-v1.5, no API key required).
+def get_embeddings() -> Any:
     """
+    Return a lazily-initialised, module-level singleton embeddings instance.
+
+    Loading the local HuggingFace model (nomic-embed-text-v1.5) is expensive on
+    CPU, so it is created once and reused across all requests. Returns the OpenAI
+    embedder when OPENAI_API_KEY is set (backward compatible).
+    """
+    global _embeddings
+    if _embeddings is not None:
+        return _embeddings
+
     if settings.openai_api_key:
         from langchain_openai import OpenAIEmbeddings
 
         model = settings.embedding_model
         if model == "nomic-embed-text":
             model = OPENAI_EMBEDDING_MODEL
-        return OpenAIEmbeddings(model=model, openai_api_key=settings.openai_api_key)
+        _embeddings = OpenAIEmbeddings(model=model, openai_api_key=settings.openai_api_key)
+        return _embeddings
 
     from langchain_huggingface import HuggingFaceEmbeddings
 
-    return HuggingFaceEmbeddings(
+    _embeddings = HuggingFaceEmbeddings(
         model_name=HUGGINGFACE_EMBEDDING_MODEL,
         model_kwargs={"trust_remote_code": True},
     )
+    return _embeddings
+
+
+def make_embeddings() -> Any:
+    """Alias for get_embeddings(); kept for backward compatibility."""
+    return get_embeddings()
 
 
 def make_chat_llm(streaming: bool = False) -> Any:

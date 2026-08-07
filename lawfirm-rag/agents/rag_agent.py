@@ -9,7 +9,6 @@ from langchain_classic.agents import AgentExecutor, create_tool_calling_agent
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.tools.retriever import create_retriever_tool
 from langchain_cohere import CohereRerank
-from langchain_postgres import PostgresChatMessageHistory
 from langchain_classic.memory import ConversationBufferWindowMemory
 from langchain_community.vectorstores import SupabaseVectorStore
 from langchain_core.retrievers import BaseRetriever
@@ -18,8 +17,10 @@ from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_classic.retrievers.multi_query import MultiQueryRetriever
 
 from search.hybrid import hybrid_search
+from search.supabase_client import make_service_client
+from sessions.supabase_history import SupabaseChatHistory
 from config import settings
-from providers import make_chat_llm, make_embeddings
+from providers import make_chat_llm, get_embeddings
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +53,7 @@ RETRIEVED CONTEXT:
 
 
 def _make_vector_store(user_client: Any) -> SupabaseVectorStore:
-    embeddings = make_embeddings()
+    embeddings = get_embeddings()
     return SupabaseVectorStore(
         client=user_client,
         embedding=embeddings,
@@ -64,9 +65,11 @@ def _make_vector_store(user_client: Any) -> SupabaseVectorStore:
 class HybridRetriever(BaseRetriever):
     """Retriever that tries a hybrid (vector + keyword) RPC first and falls back to vector similarity."""
 
-    def __init__(self, user_client: Any, store: SupabaseVectorStore):
-        self.user_client = user_client
-        self.store = store
+    user_client: Any
+    store: Any
+
+    class Config:
+        arbitrary_types_allowed = True
 
     def _get_relevant_documents(self, query: str) -> List[Document]:
         try:
@@ -226,16 +229,17 @@ async def run_chat(
         MessagesPlaceholder(variable_name="agent_scratchpad"),
     ])
 
-    # Postgres-backed chat memory
-    history = PostgresChatMessageHistory(
-        connection_string=settings.postgres_dsn,
+    # Supabase-backed chat memory (no direct Postgres connection required)
+    history = SupabaseChatHistory(
         session_id=session_id,
-        table_name="chat_memory",
+        client=make_service_client(),
     )
     memory = ConversationBufferWindowMemory(
         memory_key="chat_history",
         chat_memory=history,
         return_messages=True,
+        input_key="input",
+        output_key="output",
         k=settings.context_window,
     )
 

@@ -15,25 +15,29 @@ async def set_access_context(
     """
     Call the Supabase set_access_context RPC using the user's own signed-in client.
 
-    The RPC stamps transaction-scoped GUCs (app.user_id, app.access_level,
-    app.matter_id) that the RLS policies on documents / document_metadata read.
-    SET LOCAL semantics mean the values never bleed across pooled connections in
+    The RPC stamps the transaction-scoped GUCs (lawfirm.access_level,
+    lawfirm.matter_ids, lawfirm.view_all, lawfirm.user_id, lawfirm.role) that the
+    RLS policies on documents / document_metadata read. Each value is set with
+    set_config(..., true) so it never bleeds across pooled connections in
     PgBouncer transaction mode.
 
-    NOTE: this is intentionally correct — it calls the RPC with p_user_id,
-    p_access_level and the caller's first matter_id. Keep it in sync with the
-    set_access_context(text, int, text) function defined in schema.sql.
+    Matches the DB function signature:
+        set_access_context(p_access_level int, p_matter_ids text[],
+                           p_view_all boolean, p_user_id uuid, p_role text)
 
     Non-fatal: if the RPC fails we log and continue — the RLS policy on the
     documents table is the hard backstop.
     """
+    perms = rbac.get("perms") or {}
     try:
         user_client.rpc(
             "set_access_context",
             {
+                "p_access_level": rls.get("max_access_level", 1),
+                "p_matter_ids": rls.get("matter_filter") or [],
+                "p_view_all": perms.get("view_all", False),
                 "p_user_id": ctx.get("user_id"),
-                "p_access_level": int(ctx.get("access_level") or 1),
-                "p_matter_id": str((ctx.get("matter_ids") or [""])[0]),
+                "p_role": ctx.get("role", "associate"),
             },
         ).execute()
     except Exception as exc:  # noqa: BLE001
