@@ -40,6 +40,10 @@ class Settings(BaseSettings):
     retrieve_top_k: int = 20
     context_window: int = 10
 
+    # Per-user sliding-window rate limiting on chat endpoints
+    rate_limit_rpm: int = 20
+    rate_limit_window_seconds: int = 60
+
     # Ingest defaults used ONLY by paths without a caller in scope (Drive webhook).
     # User-triggered ingest endpoints MUST pass access_level + matter_id explicitly.
     # These defaults are intentionally conservative — they let the path run but

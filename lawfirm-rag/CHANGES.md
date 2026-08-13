@@ -65,38 +65,130 @@
 - Problem fixed: Chunk-level metadata was minimal, making auditing, tracing and RLS enforcement harder.
 - Fix applied: upsert_file() now stores richer metadata on every chunk: access_level, matter_id, mime_type, ingested_at (UTC ISO string), chunk_index, and total_chunks. The chunk insertion loop was updated to enumerate chunks so chunk_index and total_chunks are available.
 
-## [CHANGE 9] Source citations in chat answers � 2026-08-01T21:40:00+03:00
+## [CHANGE 9] Source citations in chat answers � 2026-08-01T21:40:00+03:00
 - Files: agents/rag_agent.py, app.py, streamlit_app.py
 - Problem: answers had no provenance; lawyers won't trust unsourced answers
 - Fix: run_chat() returns {answer, sources}; frontend renders clickable source links
 
-## [CHANGE 10] Document upload UI � 2026-08-01T21:40:00+03:00
+## [CHANGE 10] Document upload UI � 2026-08-01T21:40:00+03:00
 - Files: app.py, streamlit_app.py
 - Problem: ingesting documents required technical API knowledge
 - Fix: /documents/upload endpoint + sidebar uploader (partners and above only)
 
-## [CHANGE 11] Document list view � 2026-08-01T21:40:00+03:00
+## [CHANGE 11] Document list view � 2026-08-01T21:40:00+03:00
 - Files: app.py, streamlit_app.py
 - Problem: no visibility into what documents are in the system
 - Fix: /documents endpoint + Documents tab showing title, matter, date ingested
 
-## [CHANGE 12] Empty state + error handling � 2026-08-01T21:40:00+03:00
+## [CHANGE 12] Empty state + error handling � 2026-08-01T21:40:00+03:00
 - File: streamlit_app.py
 - Problem: raw errors and silent failures looked broken during demos
 - Fix: friendly messages for empty results, auth errors, timeouts, connection failures
 
-## [CHANGE 13] Chat history sidebar � 2026-08-01T21:40:00+03:00
+## [CHANGE 13] Chat history sidebar � 2026-08-01T21:40:00+03:00
 - Files: app.py, sessions/manager.py, streamlit_app.py
 - Problem: each page load started a new session with no way to return to past chats
 - Fix: /sessions endpoint + sidebar listing recent chats; clicking loads that session
 
-## [CHANGE 14] Admin user management UI � 2026-08-01T21:40:00+03:00
+## [CHANGE 14] Admin user management UI � 2026-08-01T21:40:00+03:00
 - Files: app.py, search/supabase_client.py, streamlit_app.py
 - Problem: adding users required direct Supabase dashboard access
 - Fix: /admin/users GET+POST endpoints + Admin tab in frontend (access_level 5 only)
 
-## [MVP COMPLETE] Changes 9-14 applied � 2026-08-01T21:40:00+03:00
+## [MVP COMPLETE] Changes 9-14 applied � 2026-08-01T21:40:00+03:00
 - Source citations, document upload, document list, error handling,
   chat history, admin user management all implemented
 - Frontend: streamlit_app.py updated with tabs, sidebar upload, history
 - Backend: 6 new endpoints added to app.py
+
+## [CHANGE 15] Feature batch 3 — streaming memory, hallucination guard, citations, rate limit, intent router, feedback, delta re-ingest, contextual retrieval � 2026-08-13
+- Date: 2026-08-13
+- Scope: 8 new features across the agent, API and ingest pipeline.
+
+### Feature 1 — Streaming memory persistence
+- Files: agents/rag_agent.py
+- stream_chat() never persisted the conversation turn. It now buffers every
+  yielded token, and once the stream finishes (before the SSE 'sources' event)
+  writes the human message + full assembled AI response into the same
+  `chat_memory` table run_chat() uses. The write is wrapped in its own
+  try/except so a storage failure never breaks the stream.
+- IMPLEMENTATION NOTE: the spec called for
+  `PostgresChatMessageHistory(connection_string=…)`, but the pinned
+  `langchain-postgres==0.0.17` exposes an older API — it requires a live
+  `psycopg` connection object and a session_id that is a valid UUID. Our
+  session ids are `{user_id}__{session_id}` strings, which would raise
+  ValueError there. We instead reuse `SupabaseChatHistory` (already used by
+  run_chat(), same table, same `message_to_dict` format read by
+  sessions/manager.py), which satisfies "same chat_memory table run_chat() uses".
+
+### Feature 2 — Hallucination guard (no LLM when nothing is retrieved)
+- Files: agents/rag_agent.py
+- Both run_chat() and stream_chat() now short-circuit when the retriever returns
+  zero documents: canned `"I could not find an answer in the firm's document
+  repository."` with empty sources, without invoking the LLM. A
+  `zero-doc retrieval | session=… | query=…` info log records the event.
+
+### Feature 3 — Chunk-level citations in the API response
+- Files: agents/rag_agent.py, app.py
+- `_sources_from_docs()` now surfaces `section_heading`, `chunk_index` and
+  `page_number` (from each chunk's metadata, defaulting to "" / 0). The
+  `ChatResponse.sources` field type widened to `list[dict[str, Any]]` so the
+  extra fields pass through. No frontend change required.
+
+### Feature 4 — Per-user rate limiting on chat endpoints
+- Files: ratelimit.py (new), config.py, app.py
+- New `ratelimit.py` module: in-process `RateLimiter` (dict of user→deque of
+  timestamps guarded by asyncio.Lock), sliding-window eviction, raises
+  429 with a `Retry-After` header when the limit is hit. Config reads
+  `RATE_LIMIT_RPM` (default 20) and `RATE_LIMIT_WINDOW_SECONDS` (default 60).
+  Applied in `/lawfirm-chat-trigger-006` and `/lawfirm-chat-stream` right after
+  ctx is resolved. The global HTTPException handler now merges `exc.headers`
+  into the JSON response so `Retry-After` actually reaches the client.
+
+### Feature 5 — Query intent router
+- Files: agents/rag_agent.py
+- New `classify_intent()`: one cheap LLM call requesting JSON-only output,
+  classifying into factual/comparative/summarization/procedural/out_of_scope
+  with a matching retrieve_k (8/15/20/10/0). Parse failures degrade safely to
+  factual/8. Both chat functions classify before building the retriever, pass
+  `k` into `_make_retriever()`/`HybridRetriever` (which gained an optional `k`
+  field overriding settings.retrieve_top_k), and short-circuit with a canned
+  out-of-scope response without any retrieval or LLM call when out_of_scope.
+
+### Feature 6 — User feedback endpoint
+- Files: app.py, sql/schema.sql
+- New `query_feedback` table + indexes (session, user) and `POST /feedback`
+  (201). `FeedbackBody` validates rating is 1 or -1 via a pydantic field_validator
+  (422 otherwise). user_id comes from the verified JWT (never the body) — RLS /
+  auth patterns unchanged. Insert uses psycopg directly via settings.postgres_dsn.
+
+### Feature 7 — Document freshness (delta re-ingest on Drive update)
+- Files: ingest/downloader.py, ingest/store.py, ingest/drive_webhook.py,
+  ingest/scheduler.py, sql/schema.sql
+- `list_folder_files()` now requests `modifiedTime` from Drive.
+- New `store.check_last_modified()` compares the Drive modifiedTime against
+  `document_metadata.drive_modified_time`; callers skip download+embed entirely
+  when unchanged, logging `Skipping unchanged file: <file_id>` and returning
+  `{"status": "skipped", "file_id": …}`.
+- `upsert_file()` accepts and persists `drive_modified_time`.
+- Applied to all three ingest paths: folder re-ingest (`ingest_folder`, which
+  now also reports a `skipped` count), Drive webhook, and the 6-hour poll
+  scheduler (mod-time fast-path before the existing content-hash check).
+- SQL: `alter table document_metadata add column if not exists drive_modified_time text;`
+  run in Supabase to add the new column.
+
+### Feature 8 — Contextual chunk enrichment before embedding
+- Files: ingest/embed.py, ingest/store.py
+- New `enrich_chunk()` prefixes each chunk with
+  `Document: <file_title>\nSection: <section_heading|General>\n\n<text>` for
+  embedding only. `embed_chunks()` takes `list[TextChunk]` + optional
+  `file_title`, enriches internally, and embeds the enriched text; `store.py`
+  passes the file title. The stored chunk text stays clean (citations and
+  stored vectors' content are unaffected) — only the embedding-model input
+  changes.
+
+### Deployment notes
+- Run the new schema.sql sections in Supabase (query_feedback table + indexes,
+  and the document_metadata drive_modified_time ALTER).
+- No new top-level dependencies were added.
+- .env.example documents the two new rate-limit settings.

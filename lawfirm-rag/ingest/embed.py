@@ -112,7 +112,30 @@ def chunk_text(text: str) -> list[TextChunk]:
     return result
 
 
-def embed_chunks(chunks: list[str]) -> list[list[float]]:
-    """Embed a list of text strings (Groq/HuggingFace nomic, or OpenAI fallback)."""
+def enrich_chunk(chunk: TextChunk, file_title: str, total_pages: int = 0) -> str:
+    """
+    Prefix a chunk with document and section context for embedding only.
+
+    This is the "contextual retrieval" pattern: chunks that rely on surrounding
+    context ("as defined above", "the preceding clause") embed far better when
+    the document title and section heading are visible to the model. The stored
+    ``chunk.text`` is intentionally NOT modified — citations keep showing clean
+    text, and only the embedding input carries the enrichment.
+
+    ``total_pages`` is reserved for future page-aware enrichment.
+    """
+    section = chunk.section_heading or "General"
+    return f"Document: {file_title}\nSection: {section}\n\n{chunk.text}"
+
+
+def embed_chunks(chunks: list[TextChunk], file_title: str = "") -> list[list[float]]:
+    """
+    Embed a list of chunks (Groq/HuggingFace nomic, or OpenAI fallback).
+
+    Each chunk is enriched with its document title and section heading before
+    embedding. Only the embedding input changes — the original chunk text is
+    never rewritten.
+    """
+    enriched_texts = [enrich_chunk(chunk, file_title) for chunk in chunks]
     embedder = get_embeddings()
-    return embedder.embed_documents(chunks)
+    return embedder.embed_documents(enriched_texts)

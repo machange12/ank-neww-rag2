@@ -39,7 +39,7 @@ def list_folder_files() -> list[dict[str, str]]:
     while True:
         resp = service.files().list(
             q=query,
-            fields="nextPageToken, files(id, name, mimeType, webViewLink, properties)",
+            fields="nextPageToken, files(id, name, mimeType, modifiedTime, webViewLink, properties)",
             pageToken=page_token,
         ).execute()
         files.extend(resp.get("files", []))
@@ -77,19 +77,29 @@ async def ingest_folder(
     scope they are acting inside. The caller (chat-app endpoint) is in scope
     and MUST supply these — there is no safe default.
     """
-    from ingest.store import upsert_file
+    from ingest.store import check_last_modified, upsert_file
 
     files = list_folder_files()
     results = {
         "total": len(files),
         "ok": 0,
+        "skipped": 0,
         "errors": [],
         "access_level": access_level,
         "matter_id": matter_id,
     }
     for f in files:
         try:
-            raw = download_file(f["id"], f["mimeType"])
+            file_id = f["id"]
+            drive_modified_time = f.get("modifiedTime", "")
+
+            # Delta re-ingest: skip files whose Drive modifiedTime is unchanged.
+            if await check_last_modified(file_id, drive_modified_time):
+                logger.info("Skipping unchanged file: %s", file_id)
+                results["skipped"] += 1
+                continue
+
+            raw = download_file(file_id, f["mimeType"])
             # Drive file custom properties can carry per-file access info.
             props = f.get("properties") or {}
             try:
@@ -99,13 +109,14 @@ async def ingest_folder(
             file_matter_id = props.get("matter_id", matter_id or "")
 
             await upsert_file(
-                file_id=f["id"],
+                file_id=file_id,
                 file_title=f["name"],
                 file_url=f.get("webViewLink", ""),
                 mime_type=f["mimeType"],
                 raw_bytes=raw,
                 access_level=file_access_level,
                 matter_id=file_matter_id,
+                drive_modified_time=drive_modified_time,
             )
             results["ok"] += 1
         except Exception as exc:  # noqa: BLE001

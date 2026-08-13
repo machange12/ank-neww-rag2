@@ -8,7 +8,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from config import settings
 from ingest.downloader import download_file, list_folder_files
-from ingest.store import upsert_file
+from ingest.store import check_last_modified, upsert_file
 from search.service_client import make_service_client
 
 logger = logging.getLogger(__name__)
@@ -48,6 +48,12 @@ async def sync_drive_folder() -> dict[str, int]:
         checked += 1
         file_id = file_meta["id"]
         try:
+            # Fast-path: skip downloads entirely when Drive modifiedTime is unchanged.
+            drive_modified_time = file_meta.get("modifiedTime", "")
+            if await check_last_modified(file_id, drive_modified_time):
+                skipped += 1
+                continue
+
             raw = download_file(file_id, file_meta["mimeType"])
             content_hash = hashlib.sha256(raw).hexdigest()
             existing_hash = _existing_hash(client, file_id)
@@ -71,6 +77,7 @@ async def sync_drive_folder() -> dict[str, int]:
                 raw_bytes=raw,
                 access_level=access_level,
                 matter_id=matter_id,
+                drive_modified_time=drive_modified_time,
             )
             re_ingested += 1
         except Exception as exc:  # noqa: BLE001

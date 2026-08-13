@@ -13,6 +13,28 @@ from search.service_client import make_service_client
 logger = logging.getLogger(__name__)
 
 
+async def check_last_modified(file_id: str, drive_modified_time: str | None) -> bool:
+    """
+    Return True when the Drive ``modifiedTime`` matches the last ingested value.
+
+    Used for delta re-ingest: callers can skip the download + embed pipeline
+    entirely when Drive reports the file has not changed since it was ingested.
+    A missing ``drive_modified_time`` (or any query error) means "unknown" and
+    returns False so the file is ingested to be safe.
+    """
+    if not drive_modified_time:
+        return False
+    client = make_service_client()
+    try:
+        res = client.table("document_metadata").select("drive_modified_time").eq("file_id", file_id).execute()
+        data = getattr(res, "data", None) or res
+        if isinstance(data, list) and data:
+            return data[0].get("drive_modified_time") == drive_modified_time
+    except Exception:  # noqa: BLE001
+        logger.debug("Could not read drive_modified_time for file_id=%s", file_id)
+    return False
+
+
 async def upsert_file(
     file_id: str,
     file_title: str,
@@ -21,6 +43,7 @@ async def upsert_file(
     raw_bytes: bytes,
     access_level: int,
     matter_id: str,
+    drive_modified_time: str = "",
 ) -> dict[str, Any]:
     """
     Full ingest pipeline for one file:
@@ -69,7 +92,7 @@ async def upsert_file(
         logger.warning("No chunks produced for file_id=%s", file_id)
         return {"file_id": file_id, "chunks": 0}
 
-    embeddings = embed_chunks([chunk.text for chunk in chunks])
+    embeddings = embed_chunks(chunks, file_title=file_title)
 
     # Delete old vectors for this file (idempotent re-ingest)
     client.rpc("delete_documents_by_file_id", {"p_file_id": file_id}).execute()
@@ -103,7 +126,8 @@ async def upsert_file(
     ]
     client.table("documents").insert(rows).execute()
 
-    # Upsert metadata record (includes content_hash to enable unchanged-file detection)
+    # Upsert metadata record (includes content_hash + drive_modified_time to
+    # enable unchanged-file detection)
     client.table("document_metadata").upsert({
         "file_id":     file_id,
         "file_title":  file_title,
@@ -111,6 +135,7 @@ async def upsert_file(
         "mime_type":   mime_type,
         "ingested_at": ingested_at,
         "content_hash": content_hash,
+        "drive_modified_time": drive_modified_time,
         "access_level": access_level,
         "matter_id": matter_id,
     }, on_conflict="file_id").execute()

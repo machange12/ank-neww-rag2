@@ -9,12 +9,13 @@ from fastapi import FastAPI, File, Header, HTTPException, Request, Response, Upl
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from agents.rag_agent import run_chat, stream_chat
 from auth.jwt_validator import AuthError, build_user_ctx, verify_jwt
 from rbac.checker import build_rbac_block
 from rbac.role_matrix import ROLE_MATRIX
+from ratelimit import rate_limiter
 from rls.access_context import set_access_context
 from rls.filter_builder import build_rls_filter
 from search.supabase_client import make_anon_client, make_service_client, make_user_client
@@ -89,8 +90,23 @@ class ChatBody(BaseModel):
 class ChatResponse(BaseModel):
     answer: str
     output: str | None = None
-    sources: list[dict[str, str]] = []
+    sources: list[dict[str, Any]] = []
     session_id: str
+
+
+class FeedbackBody(BaseModel):
+    session_id: str
+    query: str
+    answer_excerpt: str = ""
+    rating: int  # 1 = thumbs up, -1 = thumbs down
+    comment: str = ""
+
+    @field_validator("rating")
+    @classmethod
+    def _rating_must_be_polar(cls, value: int) -> int:
+        if value not in (-1, 1):
+            raise ValueError("rating must be 1 (thumbs up) or -1 (thumbs down)")
+        return value
 
 
 class DriveFileIngestBody(BaseModel):
@@ -266,6 +282,8 @@ async def chat_webhook(
             raise HTTPException(status_code=401, detail=str(e))
         ctx = build_user_ctx(payload, raw_headers, body)
 
+    await rate_limiter.check(ctx["user_id"])
+
     rbac = build_rbac_block(ctx, body)
     session = build_session(ctx, rbac)
     rls = build_rls_filter(rbac, ctx, body)
@@ -327,6 +345,8 @@ async def chat_webhook_stream(
             raise HTTPException(status_code=401, detail=str(e))
         ctx = build_user_ctx(payload, raw_headers, body)
 
+    await rate_limiter.check(ctx["user_id"])
+
     rbac = build_rbac_block(ctx, body)
     session = build_session(ctx, rbac)
     rls = build_rls_filter(rbac, ctx, body)
@@ -356,6 +376,47 @@ async def chat_webhook_stream(
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+@app.post("/feedback", status_code=201)
+async def submit_feedback(
+    body: FeedbackBody,
+    authorization: str | None = Header(default=None),
+) -> JSONResponse:
+    """
+    Record thumbs-up/down feedback on a chat response.
+
+    Uses psycopg directly against ``chat_memory``-adjacent ``query_feedback``
+    table (same direct-Postgres pattern used elsewhere in the app). The caller
+    must hold a valid JWT; ``user_id`` is taken from the verified token, never
+    from the request body.
+    """
+    token = _token_from_header(authorization)
+    ctx, _ = _ctx_rbac_from_token(token)
+
+    import psycopg
+
+    with psycopg.connect(settings.postgres_dsn) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO query_feedback "
+                "(session_id, user_id, query, answer_excerpt, rating, comment) "
+                "VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
+                (
+                    body.session_id,
+                    ctx["user_id"],
+                    body.query,
+                    body.answer_excerpt,
+                    body.rating,
+                    body.comment,
+                ),
+            )
+            row = cur.fetchone()
+            inserted_id = row[0] if row else None
+
+    if inserted_id is None:
+        raise HTTPException(status_code=500, detail="Failed to persist feedback")
+    return JSONResponse({"status": "ok", "id": inserted_id}, status_code=201)
 
 
 @app.post("/documents/upload")
@@ -554,10 +615,11 @@ async def preflight(path: str) -> Response:
 
 @app.exception_handler(HTTPException)
 async def http_exc(_request: Request, exc: HTTPException) -> JSONResponse:
+    response_headers = {**(getattr(exc, "headers", {}) or {}), "Access-Control-Allow-Origin": "*"}
     return JSONResponse(
         status_code=exc.status_code,
         content={"error": exc.detail},
-        headers={"Access-Control-Allow-Origin": "*"},
+        headers=response_headers,
     )
 
 
