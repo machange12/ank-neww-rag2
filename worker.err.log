@@ -2,6 +2,7 @@ INFO:     Started server process [22556]
 INFO:     Waiting for application startup.
 INFO:     Application startup complete.
 INFO:     Uvicorn running on http://0.0.0.0:8001 (Press CTRL+C to quit)
+<<<<<<< HEAD
 Job "run_cleanup (trigger: cron[hour='2', minute='0'], next run at: 2026-08-07 02:00:00 EAT)" raised an exception
 Traceback (most recent call last):
   File "C:\Users\matew\OneDrive\Documents\ank neww rag2\.venv\Lib\site-packages\apscheduler\executors\base_py3.py", line 30, in run_coroutine_job
@@ -112,3 +113,5 @@ Traceback (most recent call last):
   File "C:\Users\matew\OneDrive\Documents\ank neww rag2\.venv\Lib\site-packages\google\oauth2\_client.py", line 73, in _handle_error_response
     raise exceptions.RefreshError(
 google.auth.exceptions.RefreshError: ('invalid_grant: Bad Request', {'error': 'invalid_grant', 'error_description': 'Bad Request'})
+=======
+>>>>>>> c7d4b0571d87621b092e195d03135e276042d2fc

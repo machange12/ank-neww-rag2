@@ -3,10 +3,17 @@ from __future__ import annotations
 import re
 from typing import NamedTuple
 
+<<<<<<< HEAD
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from config import settings
 from providers import get_embeddings
+=======
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_openai import OpenAIEmbeddings
+
+from config import settings
+>>>>>>> c7d4b0571d87621b092e195d03135e276042d2fc
 
 
 # Legal document separators ordered from largest structural unit to smallest.
@@ -112,6 +119,7 @@ def chunk_text(text: str) -> list[TextChunk]:
     return result
 
 
+<<<<<<< HEAD
 def enrich_chunk(chunk: TextChunk, file_title: str, total_pages: int = 0) -> str:
     """
     Prefix a chunk with document and section context for embedding only.
@@ -139,3 +147,12 @@ def embed_chunks(chunks: list[TextChunk], file_title: str = "") -> list[list[flo
     enriched_texts = [enrich_chunk(chunk, file_title) for chunk in chunks]
     embedder = get_embeddings()
     return embedder.embed_documents(enriched_texts)
+=======
+def embed_chunks(chunks: list[str]) -> list[list[float]]:
+    """Embed a list of text strings using OpenAI embeddings."""
+    embedder = OpenAIEmbeddings(
+        model=settings.embedding_model,
+        openai_api_key=settings.openai_api_key,
+    )
+    return embedder.embed_documents(chunks)
+>>>>>>> c7d4b0571d87621b092e195d03135e276042d2fc

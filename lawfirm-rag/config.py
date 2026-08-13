@@ -21,7 +21,10 @@ class Settings(BaseSettings):
     postgres_dsn: str = ""
 
     openai_api_key: str = ""
+<<<<<<< HEAD
     groq_api_key: str = ""
+=======
+>>>>>>> c7d4b0571d87621b092e195d03135e276042d2fc
     cohere_api_key: str = ""
 
     google_oauth_client_id: str = ""
@@ -31,19 +34,28 @@ class Settings(BaseSettings):
     drive_folder_id: str = "1btpYIgt5X9udhk6ueM8rapf5UqbPyANp"
     drive_webhook_secret: str = ""
 
+<<<<<<< HEAD
     embedding_model: str = "nomic-embed-text"
     embedding_dim: int = 1536
     chat_model: str = "llama-3.3-70b-versatile"
+=======
+    embedding_model: str = "text-embedding-3-small"
+    embedding_dim: int = 1536
+    chat_model: str = "gpt-4.1-mini"
+>>>>>>> c7d4b0571d87621b092e195d03135e276042d2fc
     chat_max_tokens: int = 4096
     chunk_size: int = 750
     chunk_overlap: int = 200
     retrieve_top_k: int = 20
     context_window: int = 10
 
+<<<<<<< HEAD
     # Per-user sliding-window rate limiting on chat endpoints
     rate_limit_rpm: int = 20
     rate_limit_window_seconds: int = 60
 
+=======
+>>>>>>> c7d4b0571d87621b092e195d03135e276042d2fc
     # Ingest defaults used ONLY by paths without a caller in scope (Drive webhook).
     # User-triggered ingest endpoints MUST pass access_level + matter_id explicitly.
     # These defaults are intentionally conservative — they let the path run but

@@ -13,6 +13,7 @@ from search.service_client import make_service_client
 logger = logging.getLogger(__name__)
 
 
+<<<<<<< HEAD
 async def check_last_modified(file_id: str, drive_modified_time: str | None) -> bool:
     """
     Return True when the Drive ``modifiedTime`` matches the last ingested value.
@@ -35,6 +36,8 @@ async def check_last_modified(file_id: str, drive_modified_time: str | None) -> 
     return False
 
 
+=======
+>>>>>>> c7d4b0571d87621b092e195d03135e276042d2fc
 async def upsert_file(
     file_id: str,
     file_title: str,
@@ -43,7 +46,10 @@ async def upsert_file(
     raw_bytes: bytes,
     access_level: int,
     matter_id: str,
+<<<<<<< HEAD
     drive_modified_time: str = "",
+=======
+>>>>>>> c7d4b0571d87621b092e195d03135e276042d2fc
 ) -> dict[str, Any]:
     """
     Full ingest pipeline for one file:
@@ -92,7 +98,11 @@ async def upsert_file(
         logger.warning("No chunks produced for file_id=%s", file_id)
         return {"file_id": file_id, "chunks": 0}
 
+<<<<<<< HEAD
     embeddings = embed_chunks(chunks, file_title=file_title)
+=======
+    embeddings = embed_chunks([chunk.text for chunk in chunks])
+>>>>>>> c7d4b0571d87621b092e195d03135e276042d2fc
 
     # Delete old vectors for this file (idempotent re-ingest)
     client.rpc("delete_documents_by_file_id", {"p_file_id": file_id}).execute()
@@ -126,8 +136,12 @@ async def upsert_file(
     ]
     client.table("documents").insert(rows).execute()
 
+<<<<<<< HEAD
     # Upsert metadata record (includes content_hash + drive_modified_time to
     # enable unchanged-file detection)
+=======
+    # Upsert metadata record (includes content_hash to enable unchanged-file detection)
+>>>>>>> c7d4b0571d87621b092e195d03135e276042d2fc
     client.table("document_metadata").upsert({
         "file_id":     file_id,
         "file_title":  file_title,
@@ -135,7 +149,10 @@ async def upsert_file(
         "mime_type":   mime_type,
         "ingested_at": ingested_at,
         "content_hash": content_hash,
+<<<<<<< HEAD
         "drive_modified_time": drive_modified_time,
+=======
+>>>>>>> c7d4b0571d87621b092e195d03135e276042d2fc
         "access_level": access_level,
         "matter_id": matter_id,
     }, on_conflict="file_id").execute()
