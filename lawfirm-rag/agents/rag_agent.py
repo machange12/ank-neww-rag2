@@ -6,11 +6,7 @@ import json
 import re
 from typing import Any, List
 
-from langchain_classic.agents import AgentExecutor, create_tool_calling_agent
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_core.tools.retriever import create_retriever_tool
 from langchain_cohere import CohereRerank
-from langchain_classic.memory import ConversationBufferWindowMemory
 from langchain_community.vectorstores import SupabaseVectorStore
 from langchain_core.retrievers import BaseRetriever
 from langchain_core.documents import Document
@@ -24,18 +20,6 @@ from config import settings
 from providers import make_chat_llm, get_embeddings
 
 logger = logging.getLogger(__name__)
-
-RAG_SYSTEM_TEMPLATE = """{system_prefix}
-
-You are a secure legal knowledge assistant for Anjarwalla & Khanna Advocates.
-
-CORE BEHAVIOUR RULES:
-1. ALWAYS call the search tool for any legal question — never answer from general knowledge alone.
-2. For greetings or small talk: respond briefly, do NOT reference the knowledge base.
-3. For legal questions: search first, cite sources with [Title | Date | Matter ID].
-4. If insufficient context: "I could not find an answer in the firm's document repository."
-5. Never speculate beyond retrieved content.
-"""
 
 RAG_STREAM_TEMPLATE = """{system_prefix}
 
@@ -207,17 +191,6 @@ def _sources_from_docs(docs: list[Any]) -> list[dict[str, Any]]:
     return sources
 
 
-def _sources_from_intermediate_steps(result: dict[str, Any]) -> list[dict[str, Any]]:
-    sources: list[dict[str, Any]] = []
-    for step in result.get("intermediate_steps", []):
-        if isinstance(step, tuple) and len(step) == 2:
-            docs = step[1] if isinstance(step[1], list) else []
-            for source in _sources_from_docs(docs):
-                if not any(existing["url"] == source["url"] for existing in sources):
-                    sources.append(source)
-    return sources[:5]
-
-
 def _log_retrieval(
     session_id: str,
     query: str,
@@ -250,12 +223,16 @@ async def run_chat(
     user_client: Any,
 ) -> dict[str, Any]:
     """
-    Run one turn of the RAG chat agent.
-    - Classifies query intent to choose the retrieval depth (or short-circuit).
-    - Retrieves via hybrid_search_rls (if present) with RLS; falls back to vector similarity.
-    - Rewrites query with MultiQueryRetriever.from_llm before retrieval.
-    - Reranks with Cohere if COHERE_API_KEY is set.
-    - Stores conversation in Postgres chat_memory table.
+    Run one turn of the RAG chat.
+
+    - Classifies query intent to choose the retrieval depth (or short-circuits).
+    - Retrieves via hybrid_search_rls (if present) with RLS; falls back to vector
+      similarity, then reranks with Cohere when COHERE_API_KEY is set.
+    - Injects the retrieved context directly into the system prompt and generates
+      the answer with a single LLM call (no multi-tool-call agent loop, which was
+      prone to re-writing the query with junk and giving up).
+    - Persists the turn to the Supabase chat_memory table so multi-turn context
+      is preserved.
     """
     llm = make_chat_llm(streaming=False)
 
@@ -265,7 +242,6 @@ async def run_chat(
         return {"answer": OUT_OF_SCOPE_RESPONSE, "sources": []}
 
     retriever = _make_retriever(user_client, llm, k=intent["retrieve_k"])
-    retrieved_sources: list[dict[str, Any]] = []
     docs: list[Any] = []
     try:
         docs = await asyncio.to_thread(retriever.invoke, chat_input)
@@ -276,65 +252,55 @@ async def run_chat(
                 docs=docs,
                 reranked=bool(settings.cohere_api_key),
             )
-            retrieved_sources = _sources_from_docs(docs)[:5]
     except Exception as exc:
-        logger.debug("source pre-retrieval failed: %s", exc)
+        logger.debug("retrieval failed: %s", exc)
 
     # Hallucination guard: never call the LLM when nothing was retrieved.
     if not docs:
         logger.info("zero-doc retrieval | session=%s | query=%r", session_id, chat_input)
         return {"answer": NO_RESULT_RESPONSE, "sources": []}
 
-    search_tool = create_retriever_tool(
-        retriever,
-        name="search_law_firm_documents",
-        description=(
-            "Search the law firm's secure document knowledge base. "
-            "Use this for any legal question, case research, or document lookup. "
-            "Input: the user's search query."
-        ),
+    sources = _sources_from_docs(docs)[:5]
+
+    # Build context from retrieved docs and inject into the system message.
+    context = _build_context_string(docs)
+    system_text = RAG_STREAM_TEMPLATE.format(
+        system_prefix=system_prefix,
+        context=context,
     )
 
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", RAG_SYSTEM_TEMPLATE),
-        MessagesPlaceholder(variable_name="chat_history"),
-        ("human", "{input}"),
-        MessagesPlaceholder(variable_name="agent_scratchpad"),
-    ])
-
-    # Supabase-backed chat memory (no direct Postgres connection required)
+    # Load recent history (Supabase-backed) so multi-turn context is preserved.
     history = SupabaseChatHistory(
         session_id=session_id,
         client=make_service_client(),
     )
-    memory = ConversationBufferWindowMemory(
-        memory_key="chat_history",
-        chat_memory=history,
-        return_messages=True,
-        input_key="input",
-        output_key="output",
-        k=settings.context_window,
-    )
+    try:
+        chat_history: list[Any] = history.messages[-settings.context_window * 2:]
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("history load failed: %s", exc)
+        chat_history = []
 
-    agent = create_tool_calling_agent(llm=llm, tools=[search_tool], prompt=prompt)
-    executor = AgentExecutor(
-        agent=agent,
-        tools=[search_tool],
-        memory=memory,
-        verbose=False,
-        handle_parsing_errors=True,
-        return_intermediate_steps=True,
-    )
+    messages: list[Any] = [SystemMessage(content=system_text)]
+    messages.extend(chat_history)
+    messages.append(HumanMessage(content=chat_input))
 
-    result = await executor.ainvoke({
-        "input": chat_input,
-        "system_prefix": system_prefix,
-    })
+    answer = ""
+    try:
+        response = llm.invoke(messages)
+        answer = getattr(response, "content", "") or ""
+    except Exception as exc:  # noqa: BLE001
+        logger.error("LLM generation failed for session=%s: %s", session_id, exc)
+        answer = NO_RESULT_RESPONSE
 
-    return {
-        "answer": result.get("output", ""),
-        "sources": _sources_from_intermediate_steps(result) or retrieved_sources,
-    }
+    # Persist this turn (user + AI) to chat_memory. A failure must not break the
+    # response, so it is isolated in its own try/except.
+    try:
+        history.add_user_message(chat_input)
+        history.add_ai_message(answer)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("memory persistence failed: %s", exc)
+
+    return {"answer": answer, "sources": sources}
 
 
 async def stream_chat(
