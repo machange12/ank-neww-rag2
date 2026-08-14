@@ -10,11 +10,21 @@ from providers import get_embeddings
 logger = logging.getLogger(__name__)
 
 
-def hybrid_search(client: Any, query_text: str, match_count: int = 20, rrf_k: int = 60) -> List[Document]:
+def hybrid_search(
+    client: Any,
+    query_text: str,
+    match_count: int = 20,
+    rrf_k: int = 60,
+    doc_type_filter: str | None = None,
+) -> List[Document]:
     """
     Perform a hybrid search (vector + keyword fusion) via a Supabase RPC.
     If the RPC does not exist or fails, return an empty list so callers can
     fall back to pure vector similarity.
+
+    ``doc_type_filter`` is optional — when set it is forwarded to the RPC as an
+    additional ``doc_type_filter`` argument, which the RPC uses to filter rows
+    by ``metadata->>'doc_type'``. Passing None preserves the existing behaviour.
     """
     try:
         embedder = get_embeddings()
@@ -26,15 +36,16 @@ def hybrid_search(client: Any, query_text: str, match_count: int = 20, rrf_k: in
 
         # Call the Supabase RPC. The RPC is expected to return rows with
         # at least `content` and `metadata` columns to construct Documents.
-        resp = client.rpc(
-            "hybrid_search_rls",
-            {
-                "query_text": query_text,
-                "query_embedding": query_embedding,
-                "match_count": match_count,
-                "rrf_k": rrf_k,
-            },
-        ).execute()
+        rpc_params: dict[str, Any] = {
+            "query_text": query_text,
+            "query_embedding": query_embedding,
+            "match_count": match_count,
+            "rrf_k": rrf_k,
+        }
+        if doc_type_filter:
+            rpc_params["doc_type_filter"] = doc_type_filter
+
+        resp = client.rpc("hybrid_search_rls", rpc_params).execute()
 
         data = getattr(resp, "data", None) or resp
         if not data:

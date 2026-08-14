@@ -192,3 +192,86 @@
   and the document_metadata drive_modified_time ALTER).
 - No new top-level dependencies were added.
 - .env.example documents the two new rate-limit settings.
+
+## [CHANGE 16] Document intelligence layer at ingest � 2026-08-14
+- Files:
+  - ingest/classifier.py (new)
+  - ingest/store.py
+  - sql/schema.sql
+  - sql/functions.sql
+  - schema.sql
+  - search/hybrid.py
+  - agents/rag_agent.py
+  - app.py
+- Problem: retrieval was purely semantic-similarity based; there was no way to
+  filter chunks by document type, clause type, parties, cited statutes, court,
+  outcome or jurisdiction, and no visibility into what a document actually was.
+- Fix: added a document intelligence layer that runs once per file at ingest,
+  BEFORE chunking. Each file is (1) classified and (2) parsed for structured
+  legal entities, and the enriched metadata is stamped onto every chunk.
+
+### Feature A — classifier.py
+- New module `ingest/classifier.py` with two functions:
+  - `classify_document(text, file_title, llm=None) -> dict` — one cheap
+    gpt-4o-mini call returning `{doc_type, jurisdiction, language}`. doc_type
+    is constrained to one of judgment/statute/contract/pleading/legal_memo/
+    correspondence/due_diligence/precedent/unknown. Any parse failure falls
+    back to `{"doc_type": "unknown", "jurisdiction": "Unknown", "language":
+    "English"}`.
+  - `extract_legal_entities(text, doc_type, llm=None) -> dict` — one cheap
+    gpt-4o-mini call with a doc_type-aware prompt (judgment/contract/statute/
+    pleading get tailored schemas; everything else gets a generic
+    parties/subject/date/key_topics schema). Only the first 6000 characters of
+    text are sent. Any failure returns `{}`.
+  - Both accept an optional `llm`; if omitted they build
+    `ChatOpenAI(model="gpt-4o-mini", temperature=0)` from settings internally.
+  - Module-level logger + docstrings on every function.
+
+### Feature B — store.py pipeline integration
+- `upsert_file()` now, after text extraction and before chunking, runs the
+  intelligence block: build the LLM, classify, extract entities, merge into
+  `doc_intelligence = {**doc_classification, **legal_entities}` and log
+  `doc_intelligence file_id=... type=...`.
+- The whole block is wrapped in try/except — a classifier failure logs a warning
+  and sets `doc_intelligence = {}` so ingest NEVER breaks.
+- Every chunk's metadata now carries `doc_type`, `jurisdiction`, `doc_language`
+  and the full `legal_entities` dict (stored as JSONB inside the chunk metadata).
+- The `document_metadata` upsert now stores `doc_type` (TEXT) and
+  `legal_entities` (JSONB via `json.dumps`).
+
+### Feature C — schema.sql
+- Added idempotent columns + indexes:
+  - `document_metadata.doc_type TEXT DEFAULT 'unknown'`
+  - `document_metadata.legal_entities JSONB DEFAULT '{}'`
+  - `idx_doc_metadata_doc_type` on `doc_type`
+  - `idx_doc_metadata_legal_entities` GIN on `legal_entities`
+- Chunk metadata lives in the `documents.metadata` JSONB — no table change
+  needed there; `doc_type`/`legal_entities` are nested inside it.
+
+### Feature D — doc_type retrieval filtering
+- `search/hybrid.py` `hybrid_search()` accepts optional `doc_type_filter` and
+  forwards it to the `hybrid_search_rls` RPC.
+- `hybrid_search_rls` (in both `sql/functions.sql` and `schema.sql`) gained an
+  optional `doc_type_filter text default null` argument; both the vector and
+  keyword CTEs now filter `metadata->>'doc_type' = doc_type_filter` when set.
+- `HybridRetriever` gained an optional `doc_type_filter` field; it passes it to
+  the hybrid RPC and to the vector-similarity fallback (as a metadata filter).
+- `_make_retriever()` accepts optional `doc_type_filter` and forwards it.
+- `classify_intent()` now also returns `doc_type_hint` derived via a cheap,
+  LLM-free keyword check (judgment/contract/statute keywords), and both
+  `run_chat()` and `stream_chat()` pass it as `doc_type_filter`.
+
+### Feature E — GET /documents/intelligence
+- New endpoint in `app.py` returns `doc_type` + `legal_entities` for all indexed
+  documents the caller can access (scoped by `access_level`), newest first, so
+  the frontend can show each document's classification.
+
+### Deployment notes
+- Run the new schema.sql sections in Supabase (doc_type/legal_entities columns
+  + indexes on document_metadata).
+- Re-create `hybrid_search_rls` (run the updated sql/functions.sql) so the RPC
+  accepts the new `doc_type_filter` argument. Until that is deployed, the hybrid
+  call with a doc_type_filter will fail gracefully and fall back to the
+  vector-similarity path with a metadata filter.
+- Adds ~2 cheap LLM calls (gpt-4o-mini) per FILE ingest — not per chunk.
+- No new top-level dependencies.

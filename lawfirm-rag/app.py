@@ -386,33 +386,30 @@ async def submit_feedback(
     """
     Record thumbs-up/down feedback on a chat response.
 
-    Uses psycopg directly against ``chat_memory``-adjacent ``query_feedback``
-    table (same direct-Postgres pattern used elsewhere in the app). The caller
-    must hold a valid JWT; ``user_id`` is taken from the verified token, never
-    from the request body.
+    Uses the Supabase service-role REST client (the same pattern as every other
+    write in the app) so it works on Supabase free tier, which blocks direct
+    Postgres connections. The caller must hold a valid JWT; ``user_id`` is taken
+    from the verified token, never from the request body.
     """
     token = _token_from_header(authorization)
     ctx, _ = _ctx_rbac_from_token(token)
 
-    import psycopg
-
-    with psycopg.connect(settings.postgres_dsn) as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "INSERT INTO query_feedback "
-                "(session_id, user_id, query, answer_excerpt, rating, comment) "
-                "VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
-                (
-                    body.session_id,
-                    ctx["user_id"],
-                    body.query,
-                    body.answer_excerpt,
-                    body.rating,
-                    body.comment,
-                ),
-            )
-            row = cur.fetchone()
-            inserted_id = row[0] if row else None
+    client = make_service_client()
+    res = (
+        client.table("query_feedback")
+        .insert({
+            "session_id": body.session_id,
+            "user_id": ctx["user_id"],
+            "query": body.query,
+            "answer_excerpt": body.answer_excerpt,
+            "rating": body.rating,
+            "comment": body.comment,
+        })
+        .execute()
+    )
+    data = getattr(res, "data", None) or res
+    inserted = data[0] if isinstance(data, list) and data else {}
+    inserted_id = inserted.get("id")
 
     if inserted_id is None:
         raise HTTPException(status_code=500, detail="Failed to persist feedback")
@@ -472,6 +469,23 @@ async def list_documents(
         .execute()
     )
     return JSONResponse({"documents": result.data or []})
+
+
+@app.get("/documents/intelligence")
+async def list_document_intelligence(authorization: str | None = Header(default=None)) -> JSONResponse:
+    """Return doc_type and legal_entities for all indexed documents the user can access."""
+    token = _token_from_header(authorization)
+    ctx, _ = _ctx_rbac_from_token(token)
+    client = make_user_client(token)
+    res = (
+        client.table("document_metadata")
+        .select("file_id, file_title, doc_type, legal_entities, ingested_at")
+        .lte("access_level", ctx["access_level"])
+        .order("ingested_at", desc=True)
+        .execute()
+    )
+    data = getattr(res, "data", res) or []
+    return JSONResponse({"documents": data})
 
 
 @app.get("/sessions")

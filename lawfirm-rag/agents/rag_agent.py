@@ -55,6 +55,27 @@ INTENT_CLASSIFIER_PROMPT = (
     "Query: {query}"
 )
 
+# Keyword hints → doc_type. Matched case-insensitively; first hit wins. No LLM call.
+DOC_TYPE_HINT_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "judgment": ("judgment", "ruling", "decision", "case", "eklr"),
+    "contract": ("contract", "agreement", "clause", "nda", "lease"),
+    "statute": ("act", "statute", "regulation", "section", "cap."),
+}
+
+
+def _doc_type_hint_from_query(query: str) -> str | None:
+    """
+    Cheap, LLM-free doc_type hint for a query.
+
+    Returns "judgment", "contract", "statute" or None based on simple keyword
+    matching. Used to restrict retrieval to a single document type.
+    """
+    lowered = query.lower()
+    for doc_type, keywords in DOC_TYPE_HINT_KEYWORDS.items():
+        if any(keyword in lowered for keyword in keywords):
+            return doc_type
+    return None
+
 
 def classify_intent(query: str, llm: Any) -> dict[str, Any]:
     """
@@ -63,7 +84,11 @@ def classify_intent(query: str, llm: Any) -> dict[str, Any]:
     Uses one cheap LLM call that is instructed to reply with JSON only. The
     response is parsed defensively — any parse failure degrades safely to
     factual/8 so the chat path never breaks on garbage output.
+
+    Also derives a ``doc_type_hint`` from the query via keyword matching (no
+    extra LLM call) so retrieval can be scoped to a single document type.
     """
+    doc_type_hint = _doc_type_hint_from_query(query)
     try:
         response = llm.invoke(INTENT_CLASSIFIER_PROMPT.format(query=query))
         content = getattr(response, "content", "") or ""
@@ -82,10 +107,10 @@ def classify_intent(query: str, llm: Any) -> dict[str, Any]:
             retrieve_k = INTENT_RETRIEVE_K[intent]
         if retrieve_k <= 0 or retrieve_k > 50:
             retrieve_k = INTENT_RETRIEVE_K[intent]
-        return {"intent": intent, "retrieve_k": retrieve_k}
+        return {"intent": intent, "retrieve_k": retrieve_k, "doc_type_hint": doc_type_hint}
     except Exception as exc:  # noqa: BLE001
         logger.debug("intent classification failed, defaulting to factual/8: %s", exc)
-        return {"intent": "factual", "retrieve_k": 8}
+        return {"intent": "factual", "retrieve_k": 8, "doc_type_hint": doc_type_hint}
 
 
 def _make_vector_store(user_client: Any) -> SupabaseVectorStore:
@@ -104,6 +129,7 @@ class HybridRetriever(BaseRetriever):
     user_client: Any
     store: Any
     k: int | None = None
+    doc_type_filter: str | None = None
 
     class Config:
         arbitrary_types_allowed = True
@@ -111,23 +137,40 @@ class HybridRetriever(BaseRetriever):
     def _get_relevant_documents(self, query: str) -> List[Document]:
         top_k = self.k if self.k is not None else settings.retrieve_top_k
         try:
-            docs = hybrid_search(self.user_client, query, match_count=top_k)
+            docs = hybrid_search(
+                self.user_client,
+                query,
+                match_count=top_k,
+                doc_type_filter=self.doc_type_filter,
+            )
         except Exception:
             docs = []
         if docs:
             return docs
-        # Fallback to vector similarity
-        return self.store.similarity_search(query, k=top_k)
+        # Fallback to vector similarity. When a doc_type filter is set, pass it
+        # as a metadata filter so only that document type is matched.
+        filter_kwargs = {"filter": {"doc_type": self.doc_type_filter}} if self.doc_type_filter else {}
+        return self.store.similarity_search(query, k=top_k, **filter_kwargs)
 
 
-def _make_retriever(user_client: Any, llm: Any, k: int | None = None) -> Any:
-    """Build the retrieval chain; ``k`` overrides settings.retrieve_top_k for this call."""
+def _make_retriever(user_client: Any, llm: Any, k: int | None = None, doc_type_filter: str | None = None) -> Any:
+    """Build the retrieval chain; ``k`` overrides settings.retrieve_top_k for this call.
+
+    ``doc_type_filter`` (optional) restricts retrieval to a single document type
+    (e.g. "judgment", "contract", "statute"). Passing None preserves the existing
+    unfiltered behaviour.
+    """
     if k is None:
         k = settings.retrieve_top_k
     store = _make_vector_store(user_client)
 
     # Use the hybrid retriever that prefers the RPC-based fusion search
-    hybrid_retriever = HybridRetriever(user_client=user_client, store=store, k=k)
+    hybrid_retriever = HybridRetriever(
+        user_client=user_client,
+        store=store,
+        k=k,
+        doc_type_filter=doc_type_filter,
+    )
 
     # Wrap with multi-query rewriting to broaden retrievals
     multi_retriever = MultiQueryRetriever.from_llm(
@@ -241,7 +284,9 @@ async def run_chat(
         logger.info("out_of_scope query | session=%s | query=%r", session_id, chat_input)
         return {"answer": OUT_OF_SCOPE_RESPONSE, "sources": []}
 
-    retriever = _make_retriever(user_client, llm, k=intent["retrieve_k"])
+    retriever = _make_retriever(
+        user_client, llm, k=intent["retrieve_k"], doc_type_filter=intent.get("doc_type_hint")
+    )
     docs: list[Any] = []
     try:
         docs = await asyncio.to_thread(retriever.invoke, chat_input)
@@ -328,7 +373,9 @@ async def stream_chat(
         yield f"data: {json.dumps({'type': 'sources', 'sources': []})}\n\n"
         return
 
-    retriever = _make_retriever(user_client, llm, k=intent["retrieve_k"])
+    retriever = _make_retriever(
+        user_client, llm, k=intent["retrieve_k"], doc_type_filter=intent.get("doc_type_hint")
+    )
     docs: list[Any] = []
     sources: list[dict[str, Any]] = []
 

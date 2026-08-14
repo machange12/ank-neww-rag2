@@ -107,7 +107,8 @@ create or replace function public.hybrid_search_rls(
   query_text      text,
   query_embedding vector,
   match_count     int,
-  rrf_k           int
+  rrf_k           int,
+  doc_type_filter text default null
 )
 returns table (content text, metadata jsonb)
 language plpgsql
@@ -120,6 +121,7 @@ begin
     select d.content, d.metadata,
            row_number() over (order by d.embedding <=> query_embedding) as rank
     from public.documents d
+    where (doc_type_filter is null or d.metadata->>'doc_type' = doc_type_filter)
     order by d.embedding <=> query_embedding
     limit match_count
   ),
@@ -133,6 +135,7 @@ begin
            ) as rank
     from public.documents d
     where to_tsvector('english', d.content) @@ plainto_tsquery('english', query_text)
+      and (doc_type_filter is null or d.metadata->>'doc_type' = doc_type_filter)
     limit match_count
   ),
   fused as (

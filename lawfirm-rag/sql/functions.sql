@@ -51,7 +51,8 @@ create or replace function public.hybrid_search_rls(
   query_text text,
   query_embedding vector,
   match_count int default 20,
-  rrf_k int default 60
+  rrf_k int default 60,
+  doc_type_filter text default null
 ) returns table (
   id bigint,
   content text,
@@ -70,6 +71,7 @@ as $$
       row_number() over (order by d.embedding <=> query_embedding) as rank
     from public.documents d
     where d.embedding is not null
+      and (doc_type_filter is null or d.metadata->>'doc_type' = doc_type_filter)
     order by d.embedding <=> query_embedding
     limit match_count
   ),
@@ -81,6 +83,7 @@ as $$
       ) as rank
     from public.documents d
     where to_tsvector('english', d.content) @@ plainto_tsquery('english', query_text)
+      and (doc_type_filter is null or d.metadata->>'doc_type' = doc_type_filter)
     order by ts_rank_cd(to_tsvector('english', d.content), plainto_tsquery('english', query_text)) desc
     limit match_count
   ),
@@ -114,7 +117,7 @@ as $$
   limit match_count;
 $$;
 
-grant execute on function public.hybrid_search_rls(text, vector, int, int)
+grant execute on function public.hybrid_search_rls(text, vector, int, int, text)
   to authenticated, anon;
 
 create or replace function public.delete_documents_by_file_id(p_file_id text)

@@ -40,6 +40,16 @@ create index if not exists document_metadata_access_matter_idx
 -- existing deployments get the column without dropping the table.
 alter table public.document_metadata add column if not exists drive_modified_time text;
 
+-- Document intelligence: doc_type (classifier output) + full legal-entities JSONB.
+-- ALTER is used so existing deployments get the columns without dropping the table.
+alter table document_metadata add column if not exists doc_type text default 'unknown';
+alter table document_metadata add column if not exists legal_entities jsonb default '{}'::jsonb;
+
+create index if not exists idx_doc_metadata_doc_type
+  on document_metadata (doc_type);
+create index if not exists idx_doc_metadata_legal_entities
+  on document_metadata using gin (legal_entities);
+
 -- Chat memory (LangChain PostgresChatMessageHistory)
 create table if not exists public.chat_memory (
   id         bigserial primary key,

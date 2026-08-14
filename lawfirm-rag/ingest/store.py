@@ -6,9 +6,13 @@ import hashlib
 from datetime import datetime, timezone
 from typing import Any
 
+from ingest.classifier import classify_document, extract_legal_entities
 from ingest.embed import chunk_text, embed_chunks
 from ingest.extract import extract_text
 from search.service_client import make_service_client
+
+from config import settings
+from langchain_openai import ChatOpenAI
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +91,26 @@ async def upsert_file(
         return {"file_id": file_id, "chunks": 0, "skipped": True}
 
     text, total_pages = extract_text(raw_bytes, mime_type)
+
+    # Document intelligence — classify and extract entities once per file.
+    # A classifier failure must NEVER break ingest: fall back to empty metadata.
+    doc_intelligence: dict[str, Any] = {}
+    try:
+        _llm = ChatOpenAI(model="gpt-4o-mini", temperature=0, api_key=settings.openai_api_key)
+        doc_classification = classify_document(text, file_title, _llm)
+        legal_entities = extract_legal_entities(
+            text, doc_classification.get("doc_type", "unknown"), _llm
+        )
+        doc_intelligence = {**doc_classification, **legal_entities}
+        logger.info(
+            "doc_intelligence file_id=%s type=%s",
+            file_id,
+            doc_classification.get("doc_type"),
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("doc_intelligence failed file_id=%s: %s", file_id, exc)
+        doc_intelligence = {}
+
     chunks = chunk_text(text)
     if not chunks:
         logger.warning("No chunks produced for file_id=%s", file_id)
@@ -118,6 +142,10 @@ async def upsert_file(
                 "chunk_index": chunk.chunk_index,
                 "total_chunks": total_chunks,
                 "page_number": chunk.chunk_index // chunks_per_page,
+                "doc_type": doc_intelligence.get("doc_type", "unknown"),
+                "jurisdiction": doc_intelligence.get("jurisdiction", "Unknown"),
+                "doc_language": doc_intelligence.get("language", "English"),
+                "legal_entities": doc_intelligence,
             },
             "access_level": access_level,
             "matter_id": matter_id,
@@ -138,6 +166,8 @@ async def upsert_file(
         "drive_modified_time": drive_modified_time,
         "access_level": access_level,
         "matter_id": matter_id,
+        "doc_type": doc_intelligence.get("doc_type", "unknown"),
+        "legal_entities": json.dumps(doc_intelligence),
     }, on_conflict="file_id").execute()
 
     logger.info("Ingested file_id=%s chunks=%d", file_id, len(chunks))
