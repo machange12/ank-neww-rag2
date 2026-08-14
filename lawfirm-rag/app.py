@@ -534,9 +534,12 @@ async def admin_create_user(
 @app.get("/documents/drive-files")
 async def drive_files(authorization: str | None = Header(default=None)) -> dict[str, Any]:
     _require_ingest(authorization)
-    from ingest.downloader import list_folder_files
+    from ingest.downloader import DriveAuthError, list_folder_files
 
-    files = list_folder_files()
+    try:
+        files = list_folder_files()
+    except DriveAuthError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     return {"files": files, "total": len(files)}
 
 
@@ -563,11 +566,14 @@ async def ingest_drive_folder(
     if not isinstance(json_body, dict):
         json_body = {}
 
-    from ingest.downloader import ingest_folder
+    from ingest.downloader import DriveAuthError, ingest_folder
 
     matter_id = json_body.get("matter_id") or _pick_user_matter(ctx)
     access_level = int((rbac.get("perms") or {}).get("level") or 1)
-    return await ingest_folder(access_level=access_level, matter_id=matter_id)
+    try:
+        return await ingest_folder(access_level=access_level, matter_id=matter_id)
+    except DriveAuthError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @app.post("/documents/ingest-file")
@@ -583,16 +589,20 @@ async def ingest_drive_file(
     first matter_id.
     """
     ctx, rbac = _require_ingest(authorization)
+    from ingest.downloader import DriveAuthError
     from ingest.drive_webhook import handle_drive_event
 
     matter_id = body.matter_id or _pick_user_matter(ctx)
     access_level = int((rbac.get("perms") or {}).get("level") or 1)
-    return await handle_drive_event(
-        file_id=body.file_id,
-        event="manual",
-        access_level=access_level,
-        matter_id=matter_id,
-    )
+    try:
+        return await handle_drive_event(
+            file_id=body.file_id,
+            event="manual",
+            access_level=access_level,
+            matter_id=matter_id,
+        )
+    except DriveAuthError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 def _pick_user_matter(ctx: dict[str, Any]) -> str:

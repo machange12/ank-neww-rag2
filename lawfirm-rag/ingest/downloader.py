@@ -4,8 +4,10 @@ import io
 import logging
 from typing import Any
 
+from google.auth.exceptions import RefreshError
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaIoBaseDownload
 
 from config import settings
@@ -18,16 +20,50 @@ GOOGLE_DOC_MIME   = "application/vnd.google-apps.document"
 EXPORT_MIME       = "text/plain"
 
 
+class DriveAuthError(Exception):
+    """Raised when the Google Drive credentials are missing or rejected."""
+
+    def __init__(self, message: str | None = None) -> None:
+        super().__init__(
+            message
+            or (
+                "Google Drive authentication failed. The stored refresh token is "
+                "expired or revoked. Re-run: "
+                "`python scripts/get_refresh_token.py` and update GOOGLE_REFRESH_TOKEN "
+                "in your .env file."
+            )
+        )
+
+
 def _drive_service() -> Any:
-    creds = Credentials(
-        token=None,
-        refresh_token=settings.google_refresh_token,
-        client_id=settings.google_oauth_client_id,
-        client_secret=settings.google_oauth_client_secret,
-        token_uri="https://oauth2.googleapis.com/token",
-        scopes=SCOPES,
-    )
-    return build("drive", "v3", credentials=creds, cache_discovery=False)
+    if not settings.google_refresh_token:
+        raise DriveAuthError(
+            "Google Drive is not connected. Set GOOGLE_REFRESH_TOKEN in your .env file."
+        )
+    try:
+        creds = Credentials(
+            token=None,
+            refresh_token=settings.google_refresh_token,
+            client_id=settings.google_oauth_client_id,
+            client_secret=settings.google_oauth_client_secret,
+            token_uri="https://oauth2.googleapis.com/token",
+            scopes=SCOPES,
+        )
+        return build("drive", "v3", credentials=creds, cache_discovery=False)
+    except RefreshError as exc:
+        raise DriveAuthError() from exc
+
+
+def _drive_call(call: Any) -> Any:
+    """Execute a Drive API call, translating auth failures into DriveAuthError."""
+    try:
+        return call.execute()
+    except RefreshError as exc:
+        raise DriveAuthError() from exc
+    except HttpError as exc:
+        if exc.resp.status in (401, 403):
+            raise DriveAuthError() from exc
+        raise
 
 
 def list_folder_files() -> list[dict[str, str]]:
@@ -37,11 +73,11 @@ def list_folder_files() -> list[dict[str, str]]:
     files: list[dict] = []
     page_token = None
     while True:
-        resp = service.files().list(
+        resp = _drive_call(service.files().list(
             q=query,
             fields="nextPageToken, files(id, name, mimeType, modifiedTime, webViewLink, properties)",
             pageToken=page_token,
-        ).execute()
+        ))
         files.extend(resp.get("files", []))
         page_token = resp.get("nextPageToken")
         if not page_token:
@@ -61,7 +97,14 @@ def download_file(file_id: str, mime_type: str) -> bytes:
     downloader = MediaIoBaseDownload(buf, req)
     done = False
     while not done:
-        _, done = downloader.next_chunk()
+        try:
+            _, done = downloader.next_chunk()
+        except RefreshError as exc:
+            raise DriveAuthError() from exc
+        except HttpError as exc:
+            if exc.resp.status in (401, 403):
+                raise DriveAuthError() from exc
+            raise
     return buf.getvalue()
 
 

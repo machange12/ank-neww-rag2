@@ -7,7 +7,7 @@ from typing import Any
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from config import settings
-from ingest.downloader import download_file, list_folder_files
+from ingest.downloader import DriveAuthError, download_file, list_folder_files
 from ingest.store import check_last_modified, upsert_file
 from search.service_client import make_service_client
 
@@ -39,7 +39,14 @@ def _existing_hash(client: Any, file_id: str) -> str | None:
 async def sync_drive_folder() -> dict[str, int]:
     """Poll Drive and re-ingest files whose content hash has changed."""
     client = make_service_client()
-    files = list_folder_files()
+    try:
+        files = list_folder_files()
+    except DriveAuthError as exc:
+        logger.error(
+            "Scheduled Drive sync aborted: %s",
+            exc,
+        )
+        return {"files_checked": 0, "files_re_ingested": 0, "files_skipped": 0}
     checked = 0
     re_ingested = 0
     skipped = 0

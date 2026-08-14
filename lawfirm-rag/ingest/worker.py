@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse
 
 from cleanup.orphan_finder import run_cleanup
 from config import settings
+from ingest.downloader import DriveAuthError
 from ingest.drive_webhook import handle_drive_event, verify_drive_webhook
 
 logger = logging.getLogger(__name__)
@@ -63,11 +64,14 @@ async def drive_webhook(
         raise HTTPException(status_code=400, detail="Missing file_id")
 
     logger.info("Drive event: state=%s file_id=%s", state, file_id)
-    result = await handle_drive_event(
-        file_id=file_id,
-        event=state,
-        request_headers=request_headers,
-    )
+    try:
+        result = await handle_drive_event(
+            file_id=file_id,
+            event=state,
+            request_headers=request_headers,
+        )
+    except DriveAuthError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     return JSONResponse(result, status_code=200)
 
 
@@ -101,7 +105,10 @@ async def manual_ingest(request: Request) -> JSONResponse:
         )
 
     from ingest.downloader import ingest_folder
-    result = await ingest_folder(access_level=int(access_level), matter_id=str(matter_id))
+    try:
+        result = await ingest_folder(access_level=int(access_level), matter_id=str(matter_id))
+    except DriveAuthError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     return JSONResponse(result, status_code=200)
 
 

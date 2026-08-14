@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from ingest.downloader import list_folder_files
+from ingest.downloader import DriveAuthError, list_folder_files
 from search.service_client import make_service_client
 
 logger = logging.getLogger(__name__)
@@ -18,7 +18,14 @@ async def run_cleanup() -> dict[str, Any]:
     client = make_service_client()
 
     # Live file IDs in Drive
-    drive_files = list_folder_files()
+    try:
+        drive_files = list_folder_files()
+    except DriveAuthError as exc:
+        logger.error(
+            "Nightly orphan cleanup aborted: %s",
+            exc,
+        )
+        return {"drive_files": 0, "documents_deleted": 0, "metadata_deleted": 0, "errors": [str(exc)]}
     drive_ids: set[str] = {f["id"] for f in drive_files}
 
     results: dict[str, Any] = {
