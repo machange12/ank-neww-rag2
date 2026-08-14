@@ -3,15 +3,9 @@ from __future__ import annotations
 import logging
 from typing import Any, List
 
-<<<<<<< HEAD
 from langchain_core.documents import Document
 from config import settings
 from providers import get_embeddings
-=======
-from langchain_openai import OpenAIEmbeddings
-from langchain.schema import Document
-from config import settings
->>>>>>> c7d4b0571d87621b092e195d03135e276042d2fc
 
 logger = logging.getLogger(__name__)
 
@@ -23,14 +17,7 @@ def hybrid_search(client: Any, query_text: str, match_count: int = 20, rrf_k: in
     fall back to pure vector similarity.
     """
     try:
-<<<<<<< HEAD
         embedder = get_embeddings()
-=======
-        embedder = OpenAIEmbeddings(
-            model=settings.embedding_model,
-            openai_api_key=settings.openai_api_key,
-        )
->>>>>>> c7d4b0571d87621b092e195d03135e276042d2fc
         # Prefer embed_query when available
         try:
             query_embedding = embedder.embed_query(query_text)

@@ -9,20 +9,13 @@ from fastapi import FastAPI, File, Header, HTTPException, Request, Response, Upl
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-<<<<<<< HEAD
 from pydantic import BaseModel, field_validator
-=======
-from pydantic import BaseModel
->>>>>>> c7d4b0571d87621b092e195d03135e276042d2fc
 
 from agents.rag_agent import run_chat, stream_chat
 from auth.jwt_validator import AuthError, build_user_ctx, verify_jwt
 from rbac.checker import build_rbac_block
 from rbac.role_matrix import ROLE_MATRIX
-<<<<<<< HEAD
 from ratelimit import rate_limiter
-=======
->>>>>>> c7d4b0571d87621b092e195d03135e276042d2fc
 from rls.access_context import set_access_context
 from rls.filter_builder import build_rls_filter
 from search.supabase_client import make_anon_client, make_service_client, make_user_client
@@ -97,7 +90,6 @@ class ChatBody(BaseModel):
 class ChatResponse(BaseModel):
     answer: str
     output: str | None = None
-<<<<<<< HEAD
     sources: list[dict[str, Any]] = []
     session_id: str
 
@@ -117,12 +109,6 @@ class FeedbackBody(BaseModel):
         return value
 
 
-=======
-    sources: list[dict[str, str]] = []
-    session_id: str
-
-
->>>>>>> c7d4b0571d87621b092e195d03135e276042d2fc
 class DriveFileIngestBody(BaseModel):
     file_id: str
     matter_id: str | None = None
@@ -296,11 +282,8 @@ async def chat_webhook(
             raise HTTPException(status_code=401, detail=str(e))
         ctx = build_user_ctx(payload, raw_headers, body)
 
-<<<<<<< HEAD
     await rate_limiter.check(ctx["user_id"])
 
-=======
->>>>>>> c7d4b0571d87621b092e195d03135e276042d2fc
     rbac = build_rbac_block(ctx, body)
     session = build_session(ctx, rbac)
     rls = build_rls_filter(rbac, ctx, body)
@@ -362,11 +345,8 @@ async def chat_webhook_stream(
             raise HTTPException(status_code=401, detail=str(e))
         ctx = build_user_ctx(payload, raw_headers, body)
 
-<<<<<<< HEAD
     await rate_limiter.check(ctx["user_id"])
 
-=======
->>>>>>> c7d4b0571d87621b092e195d03135e276042d2fc
     rbac = build_rbac_block(ctx, body)
     session = build_session(ctx, rbac)
     rls = build_rls_filter(rbac, ctx, body)
@@ -398,7 +378,6 @@ async def chat_webhook_stream(
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
-<<<<<<< HEAD
 @app.post("/feedback", status_code=201)
 async def submit_feedback(
     body: FeedbackBody,
@@ -440,8 +419,6 @@ async def submit_feedback(
     return JSONResponse({"status": "ok", "id": inserted_id}, status_code=201)
 
 
-=======
->>>>>>> c7d4b0571d87621b092e195d03135e276042d2fc
 @app.post("/documents/upload")
 async def upload_document(
     file: UploadFile = File(...),
@@ -638,18 +615,11 @@ async def preflight(path: str) -> Response:
 
 @app.exception_handler(HTTPException)
 async def http_exc(_request: Request, exc: HTTPException) -> JSONResponse:
-<<<<<<< HEAD
     response_headers = {**(getattr(exc, "headers", {}) or {}), "Access-Control-Allow-Origin": "*"}
     return JSONResponse(
         status_code=exc.status_code,
         content={"error": exc.detail},
         headers=response_headers,
-=======
-    return JSONResponse(
-        status_code=exc.status_code,
-        content={"error": exc.detail},
-        headers={"Access-Control-Allow-Origin": "*"},
->>>>>>> c7d4b0571d87621b092e195d03135e276042d2fc
     )
 
 

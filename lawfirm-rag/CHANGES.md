@@ -65,70 +65,41 @@
 - Problem fixed: Chunk-level metadata was minimal, making auditing, tracing and RLS enforcement harder.
 - Fix applied: upsert_file() now stores richer metadata on every chunk: access_level, matter_id, mime_type, ingested_at (UTC ISO string), chunk_index, and total_chunks. The chunk insertion loop was updated to enumerate chunks so chunk_index and total_chunks are available.
 
-<<<<<<< HEAD
 ## [CHANGE 9] Source citations in chat answers ï¿½ 2026-08-01T21:40:00+03:00
-=======
-## [CHANGE 9] Source citations in chat answers — 2026-08-01T21:40:00+03:00
->>>>>>> c7d4b0571d87621b092e195d03135e276042d2fc
 - Files: agents/rag_agent.py, app.py, streamlit_app.py
 - Problem: answers had no provenance; lawyers won't trust unsourced answers
 - Fix: run_chat() returns {answer, sources}; frontend renders clickable source links
 
-<<<<<<< HEAD
 ## [CHANGE 10] Document upload UI ï¿½ 2026-08-01T21:40:00+03:00
-=======
-## [CHANGE 10] Document upload UI — 2026-08-01T21:40:00+03:00
->>>>>>> c7d4b0571d87621b092e195d03135e276042d2fc
 - Files: app.py, streamlit_app.py
 - Problem: ingesting documents required technical API knowledge
 - Fix: /documents/upload endpoint + sidebar uploader (partners and above only)
 
-<<<<<<< HEAD
 ## [CHANGE 11] Document list view ï¿½ 2026-08-01T21:40:00+03:00
-=======
-## [CHANGE 11] Document list view — 2026-08-01T21:40:00+03:00
->>>>>>> c7d4b0571d87621b092e195d03135e276042d2fc
 - Files: app.py, streamlit_app.py
 - Problem: no visibility into what documents are in the system
 - Fix: /documents endpoint + Documents tab showing title, matter, date ingested
 
-<<<<<<< HEAD
 ## [CHANGE 12] Empty state + error handling ï¿½ 2026-08-01T21:40:00+03:00
-=======
-## [CHANGE 12] Empty state + error handling — 2026-08-01T21:40:00+03:00
->>>>>>> c7d4b0571d87621b092e195d03135e276042d2fc
 - File: streamlit_app.py
 - Problem: raw errors and silent failures looked broken during demos
 - Fix: friendly messages for empty results, auth errors, timeouts, connection failures
 
-<<<<<<< HEAD
 ## [CHANGE 13] Chat history sidebar ï¿½ 2026-08-01T21:40:00+03:00
-=======
-## [CHANGE 13] Chat history sidebar — 2026-08-01T21:40:00+03:00
->>>>>>> c7d4b0571d87621b092e195d03135e276042d2fc
 - Files: app.py, sessions/manager.py, streamlit_app.py
 - Problem: each page load started a new session with no way to return to past chats
 - Fix: /sessions endpoint + sidebar listing recent chats; clicking loads that session
 
-<<<<<<< HEAD
 ## [CHANGE 14] Admin user management UI ï¿½ 2026-08-01T21:40:00+03:00
-=======
-## [CHANGE 14] Admin user management UI — 2026-08-01T21:40:00+03:00
->>>>>>> c7d4b0571d87621b092e195d03135e276042d2fc
 - Files: app.py, search/supabase_client.py, streamlit_app.py
 - Problem: adding users required direct Supabase dashboard access
 - Fix: /admin/users GET+POST endpoints + Admin tab in frontend (access_level 5 only)
 
-<<<<<<< HEAD
 ## [MVP COMPLETE] Changes 9-14 applied ï¿½ 2026-08-01T21:40:00+03:00
-=======
-## [MVP COMPLETE] Changes 9-14 applied — 2026-08-01T21:40:00+03:00
->>>>>>> c7d4b0571d87621b092e195d03135e276042d2fc
 - Source citations, document upload, document list, error handling,
   chat history, admin user management all implemented
 - Frontend: streamlit_app.py updated with tabs, sidebar upload, history
 - Backend: 6 new endpoints added to app.py
-<<<<<<< HEAD
 
 ## [CHANGE 15] Feature batch 3 â€” streaming memory, hallucination guard, citations, rate limit, intent router, feedback, delta re-ingest, contextual retrieval ï¿½ 2026-08-13
 - Date: 2026-08-13
@@ -221,5 +192,3 @@
   and the document_metadata drive_modified_time ALTER).
 - No new top-level dependencies were added.
 - .env.example documents the two new rate-limit settings.
-=======
->>>>>>> c7d4b0571d87621b092e195d03135e276042d2fc

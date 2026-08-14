@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 import asyncio
 import json
-<<<<<<< HEAD
 import re
 from typing import Any, List
 
@@ -23,23 +22,6 @@ from search.supabase_client import make_service_client
 from sessions.supabase_history import SupabaseChatHistory
 from config import settings
 from providers import make_chat_llm, get_embeddings
-=======
-from typing import Any, List
-
-from langchain.agents import AgentExecutor, create_openai_functions_agent
-from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain.tools.retriever import create_retriever_tool
-from langchain_cohere import CohereRerank
-from langchain_openai import ChatOpenAI, OpenAIEmbeddings
-from langchain_postgres import PostgresChatMessageHistory
-from langchain.memory import ConversationBufferWindowMemory
-from langchain_community.vectorstores import SupabaseVectorStore
-from langchain.schema import BaseRetriever, Document, SystemMessage, HumanMessage
-from langchain.retrievers.multi_query import MultiQueryRetriever
-
-from search.hybrid import hybrid_search
-from config import settings
->>>>>>> c7d4b0571d87621b092e195d03135e276042d2fc
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +52,6 @@ RETRIEVED CONTEXT:
 {context}
 """
 
-<<<<<<< HEAD
 NO_RESULT_RESPONSE = "I could not find an answer in the firm's document repository."
 OUT_OF_SCOPE_RESPONSE = "This question is outside the scope of the firm's document repository."
 
@@ -125,14 +106,6 @@ def classify_intent(query: str, llm: Any) -> dict[str, Any]:
 
 def _make_vector_store(user_client: Any) -> SupabaseVectorStore:
     embeddings = get_embeddings()
-=======
-
-def _make_vector_store(user_client: Any) -> SupabaseVectorStore:
-    embeddings = OpenAIEmbeddings(
-        model=settings.embedding_model,
-        openai_api_key=settings.openai_api_key,
-    )
->>>>>>> c7d4b0571d87621b092e195d03135e276042d2fc
     return SupabaseVectorStore(
         client=user_client,
         embedding=embeddings,
@@ -144,7 +117,6 @@ def _make_vector_store(user_client: Any) -> SupabaseVectorStore:
 class HybridRetriever(BaseRetriever):
     """Retriever that tries a hybrid (vector + keyword) RPC first and falls back to vector similarity."""
 
-<<<<<<< HEAD
     user_client: Any
     store: Any
     k: int | None = None
@@ -156,21 +128,11 @@ class HybridRetriever(BaseRetriever):
         top_k = self.k if self.k is not None else settings.retrieve_top_k
         try:
             docs = hybrid_search(self.user_client, query, match_count=top_k)
-=======
-    def __init__(self, user_client: Any, store: SupabaseVectorStore):
-        self.user_client = user_client
-        self.store = store
-
-    def get_relevant_documents(self, query: str) -> List[Document]:
-        try:
-            docs = hybrid_search(self.user_client, query, match_count=settings.retrieve_top_k)
->>>>>>> c7d4b0571d87621b092e195d03135e276042d2fc
         except Exception:
             docs = []
         if docs:
             return docs
         # Fallback to vector similarity
-<<<<<<< HEAD
         return self.store.similarity_search(query, k=top_k)
 
 
@@ -182,16 +144,6 @@ def _make_retriever(user_client: Any, llm: Any, k: int | None = None) -> Any:
 
     # Use the hybrid retriever that prefers the RPC-based fusion search
     hybrid_retriever = HybridRetriever(user_client=user_client, store=store, k=k)
-=======
-        return self.store.similarity_search(query, k=settings.retrieve_top_k)
-
-
-def _make_retriever(user_client: Any, llm: Any) -> Any:
-    store = _make_vector_store(user_client)
-
-    # Use the hybrid retriever that prefers the RPC-based fusion search
-    hybrid_retriever = HybridRetriever(user_client=user_client, store=store)
->>>>>>> c7d4b0571d87621b092e195d03135e276042d2fc
 
     # Wrap with multi-query rewriting to broaden retrievals
     multi_retriever = MultiQueryRetriever.from_llm(
@@ -207,11 +159,7 @@ def _make_retriever(user_client: Any, llm: Any) -> Any:
             top_n=5,
             model="rerank-english-v3.0",
         )
-<<<<<<< HEAD
         from langchain_classic.retrievers import ContextualCompressionRetriever
-=======
-        from langchain.retrievers import ContextualCompressionRetriever
->>>>>>> c7d4b0571d87621b092e195d03135e276042d2fc
         return ContextualCompressionRetriever(
             base_compressor=compressor,
             base_retriever=multi_retriever,
@@ -239,14 +187,9 @@ def _build_context_string(docs: list[Any]) -> str:
     return "\n\n---\n\n".join(parts)
 
 
-<<<<<<< HEAD
 def _sources_from_docs(docs: list[Any]) -> list[dict[str, Any]]:
     """Build source dicts with title/url/file_id plus chunk-level citation fields."""
     sources: list[dict[str, Any]] = []
-=======
-def _sources_from_docs(docs: list[Any]) -> list[dict[str, str]]:
-    sources: list[dict[str, str]] = []
->>>>>>> c7d4b0571d87621b092e195d03135e276042d2fc
     for doc in docs:
         meta = getattr(doc, "metadata", {}) or {}
         url = meta.get("url") or meta.get("file_url", "")
@@ -257,23 +200,15 @@ def _sources_from_docs(docs: list[Any]) -> list[dict[str, str]]:
                 "title": title,
                 "url": url,
                 "file_id": file_id,
-<<<<<<< HEAD
                 "section_heading": meta.get("section_heading", "") or "",
                 "chunk_index": meta.get("chunk_index", 0) or 0,
                 "page_number": meta.get("page_number", 0) or 0,
-=======
->>>>>>> c7d4b0571d87621b092e195d03135e276042d2fc
             })
     return sources
 
 
-<<<<<<< HEAD
 def _sources_from_intermediate_steps(result: dict[str, Any]) -> list[dict[str, Any]]:
     sources: list[dict[str, Any]] = []
-=======
-def _sources_from_intermediate_steps(result: dict[str, Any]) -> list[dict[str, str]]:
-    sources: list[dict[str, str]] = []
->>>>>>> c7d4b0571d87621b092e195d03135e276042d2fc
     for step in result.get("intermediate_steps", []):
         if isinstance(step, tuple) and len(step) == 2:
             docs = step[1] if isinstance(step[1], list) else []
@@ -316,16 +251,12 @@ async def run_chat(
 ) -> dict[str, Any]:
     """
     Run one turn of the RAG chat agent.
-<<<<<<< HEAD
     - Classifies query intent to choose the retrieval depth (or short-circuit).
-=======
->>>>>>> c7d4b0571d87621b092e195d03135e276042d2fc
     - Retrieves via hybrid_search_rls (if present) with RLS; falls back to vector similarity.
     - Rewrites query with MultiQueryRetriever.from_llm before retrieval.
     - Reranks with Cohere if COHERE_API_KEY is set.
     - Stores conversation in Postgres chat_memory table.
     """
-<<<<<<< HEAD
     llm = make_chat_llm(streaming=False)
 
     intent = classify_intent(chat_input, llm)
@@ -336,17 +267,6 @@ async def run_chat(
     retriever = _make_retriever(user_client, llm, k=intent["retrieve_k"])
     retrieved_sources: list[dict[str, Any]] = []
     docs: list[Any] = []
-=======
-    llm = ChatOpenAI(
-        model=settings.chat_model,
-        temperature=0,
-        max_tokens=settings.chat_max_tokens,
-        openai_api_key=settings.openai_api_key,
-    )
-
-    retriever = _make_retriever(user_client, llm)
-    retrieved_sources: list[dict[str, str]] = []
->>>>>>> c7d4b0571d87621b092e195d03135e276042d2fc
     try:
         docs = await asyncio.to_thread(retriever.invoke, chat_input)
         if isinstance(docs, list):
@@ -360,14 +280,11 @@ async def run_chat(
     except Exception as exc:
         logger.debug("source pre-retrieval failed: %s", exc)
 
-<<<<<<< HEAD
     # Hallucination guard: never call the LLM when nothing was retrieved.
     if not docs:
         logger.info("zero-doc retrieval | session=%s | query=%r", session_id, chat_input)
         return {"answer": NO_RESULT_RESPONSE, "sources": []}
 
-=======
->>>>>>> c7d4b0571d87621b092e195d03135e276042d2fc
     search_tool = create_retriever_tool(
         retriever,
         name="search_law_firm_documents",
@@ -385,36 +302,21 @@ async def run_chat(
         MessagesPlaceholder(variable_name="agent_scratchpad"),
     ])
 
-<<<<<<< HEAD
     # Supabase-backed chat memory (no direct Postgres connection required)
     history = SupabaseChatHistory(
         session_id=session_id,
         client=make_service_client(),
-=======
-    # Postgres-backed chat memory
-    history = PostgresChatMessageHistory(
-        connection_string=settings.postgres_dsn,
-        session_id=session_id,
-        table_name="chat_memory",
->>>>>>> c7d4b0571d87621b092e195d03135e276042d2fc
     )
     memory = ConversationBufferWindowMemory(
         memory_key="chat_history",
         chat_memory=history,
         return_messages=True,
-<<<<<<< HEAD
         input_key="input",
         output_key="output",
         k=settings.context_window,
     )
 
     agent = create_tool_calling_agent(llm=llm, tools=[search_tool], prompt=prompt)
-=======
-        k=settings.context_window,
-    )
-
-    agent = create_openai_functions_agent(llm=llm, tools=[search_tool], prompt=prompt)
->>>>>>> c7d4b0571d87621b092e195d03135e276042d2fc
     executor = AgentExecutor(
         agent=agent,
         tools=[search_tool],
@@ -444,7 +346,6 @@ async def stream_chat(
     """
     Async generator that yields tokens from the LLM as they arrive.
 
-<<<<<<< HEAD
     - Classifies query intent to choose retrieval depth (or short-circuits).
     - Retrieved docs are built into a context string and injected into the
       system message before streaming (no ungrounded answers).
@@ -464,24 +365,6 @@ async def stream_chat(
     retriever = _make_retriever(user_client, llm, k=intent["retrieve_k"])
     docs: list[Any] = []
     sources: list[dict[str, Any]] = []
-=======
-    FIX: Retrieved docs are now built into a context string and injected
-    into the system message before streaming. Previously docs were fetched
-    but never added to the prompt, meaning the LLM streamed answers with
-    no grounding — pure hallucination.
-    """
-    llm = ChatOpenAI(
-        model=settings.chat_model,
-        temperature=0,
-        max_tokens=settings.chat_max_tokens,
-        openai_api_key=settings.openai_api_key,
-        streaming=True,
-    )
-
-    retriever = _make_retriever(user_client, llm)
-    docs: list[Any] = []
-    sources: list[dict[str, str]] = []
->>>>>>> c7d4b0571d87621b092e195d03135e276042d2fc
 
     try:
         docs = await asyncio.to_thread(retriever.invoke, chat_input)
@@ -496,7 +379,6 @@ async def stream_chat(
     except Exception as exc:
         logger.debug("streaming retrieval failed: %s", exc)
 
-<<<<<<< HEAD
     # Hallucination guard: never call the LLM when nothing was retrieved.
     if not docs:
         logger.info("zero-doc retrieval | session=%s | query=%r", session_id, chat_input)
@@ -504,8 +386,6 @@ async def stream_chat(
         yield f"data: {json.dumps({'type': 'sources', 'sources': []})}\n\n"
         return
 
-=======
->>>>>>> c7d4b0571d87621b092e195d03135e276042d2fc
     # Build context string from retrieved docs and inject into system message
     context = _build_context_string(docs)
     system_text = RAG_STREAM_TEMPLATE.format(
@@ -516,7 +396,6 @@ async def stream_chat(
     sys_msg = SystemMessage(content=system_text)
     human_msg = HumanMessage(content=chat_input)
 
-<<<<<<< HEAD
     tokens_buffer: list[str] = []
     try:
         async for token in llm.astream([sys_msg, human_msg]):
@@ -542,12 +421,3 @@ async def stream_chat(
         logger.debug("streaming memory persistence failed: %s", exc)
 
     yield f"data: {json.dumps({'type': 'sources', 'sources': sources})}\n\n"
-=======
-    try:
-        async for token in llm.astream([sys_msg, human_msg]):
-            yield getattr(token, "content", token)
-        yield f"data: {json.dumps({'type': 'sources', 'sources': sources})}\n\n"
-    except Exception as exc:
-        logger.debug("streaming LLM failed: %s", exc)
-        return
->>>>>>> c7d4b0571d87621b092e195d03135e276042d2fc

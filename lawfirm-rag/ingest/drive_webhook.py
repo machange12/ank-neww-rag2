@@ -8,11 +8,7 @@ from fastapi import HTTPException
 
 from config import settings
 from ingest.downloader import download_file, list_folder_files
-<<<<<<< HEAD
 from ingest.store import check_last_modified, upsert_file
-=======
-from ingest.store import upsert_file
->>>>>>> c7d4b0571d87621b092e195d03135e276042d2fc
 from search.service_client import make_service_client
 
 logger = logging.getLogger(__name__)
@@ -86,15 +82,12 @@ async def handle_drive_event(
         logger.warning("file_id=%s not found in Drive folder — skipping", file_id)
         return {"status": "not_found", "file_id": file_id}
 
-<<<<<<< HEAD
     # Delta re-ingest: skip when the Drive modifiedTime is unchanged.
     drive_modified_time = file_meta.get("modifiedTime", "")
     if await check_last_modified(file_id, drive_modified_time):
         logger.info("Skipping unchanged file: %s", file_id)
         return {"status": "skipped", "file_id": file_id}
 
-=======
->>>>>>> c7d4b0571d87621b092e195d03135e276042d2fc
     raw = download_file(file_id, file_meta["mimeType"])
 
     # Prefer per-file Drive properties when present; fall back to provided args
@@ -113,9 +106,6 @@ async def handle_drive_event(
         raw_bytes=raw,
         access_level=file_access_level,
         matter_id=file_matter_id,
-<<<<<<< HEAD
         drive_modified_time=drive_modified_time,
-=======
->>>>>>> c7d4b0571d87621b092e195d03135e276042d2fc
     )
     return {"status": "ingested", **result}
