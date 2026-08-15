@@ -5,6 +5,7 @@ import {
   CheckCircle2,
   Clipboard,
   Download,
+  ExternalLink,
   FileText,
   FolderKanban,
   History,
@@ -734,22 +735,35 @@ export default function ANKRagDashboard() {
                 </div>
               ) : (
                 sources.map((source) => (
-                  <button
+                  // Each card opens the retrieved document itself (the
+                  // backend only ever includes sources that have a real
+                  // Drive/storage url), not just a citation label.
+                  <a
                     key={source.id}
+                    href={source.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    title={source.title}
                     onClick={() => setActiveSource(source.id)}
-                    className={`mb-2 w-full rounded-lg border p-2.5 text-left transition-colors ${
+                    className={`mb-2 block w-full rounded-lg border p-2.5 text-left transition-colors ${
                       activeSource === source.id
                         ? "border-blue-300 bg-blue-50"
                         : "border-gray-200 bg-white hover:border-blue-200"
                     }`}
                   >
-                    <div className={`truncate text-xs font-medium ${activeSource === source.id ? "text-blue-700" : "text-gray-800"}`}>
-                      {source.title}
+                    <div className="flex items-center justify-between gap-2">
+                      <div className={`truncate text-xs font-medium ${activeSource === source.id ? "text-blue-700" : "text-gray-800"}`}>
+                        {source.title}
+                      </div>
+                      <ExternalLink
+                        size={11}
+                        className={`flex-shrink-0 ${activeSource === source.id ? "text-blue-500" : "text-gray-300"}`}
+                      />
                     </div>
                     <div className={`mt-0.5 truncate text-[11px] ${activeSource === source.id ? "text-blue-500" : "text-gray-400"}`}>
                       {source.meta}
                     </div>
-                  </button>
+                  </a>
                 ))
               )}
             </div>
@@ -1019,7 +1033,10 @@ function SettingsPanel({ compactMode, setCompactMode, signOut }) {
           Compact display
           <input type="checkbox" checked={compactMode} onChange={(event) => setCompactMode(event.target.checked)} />
         </label>
-        <button onClick={signOut} className="flex items-center gap-2 rounded-lg border border-red-200 bg-white px-3 py-2 text-sm text-red-700 hover:bg-red-50">
+        {/* Wrapped in an arrow function: onClick={signOut} would pass the
+            click SyntheticEvent as signOut's `message` argument, which then
+            got rendered as the error banner and crashed the app. */}
+        <button onClick={() => signOut()} className="flex items-center gap-2 rounded-lg border border-red-200 bg-white px-3 py-2 text-sm text-red-700 hover:bg-red-50">
           <LogOut size={15} /> Sign out
         </button>
       </div>
