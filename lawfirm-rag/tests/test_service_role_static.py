@@ -2,7 +2,11 @@
 user-facing retrieval/history read paths.
 
 Files that MUST NOT import or reference the service-role client:
-  * app.py
+  * app.py, deps.py
+  * routers/** (auth.py, chat.py, documents.py, admin.py — admin.py reaches
+    the service role only indirectly via authz.service.admin_client(), which
+    is the documented exception below)
+  * matters/lookup.py, search/documents_repo.py
   * agents/rag_agent.py
   * sessions/** (manager.py, supabase_history.py)
   * search/hybrid.py
@@ -21,6 +25,13 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 FORBIDDEN_FILES = [
     PROJECT_ROOT / "app.py",
+    PROJECT_ROOT / "deps.py",
+    PROJECT_ROOT / "routers" / "auth.py",
+    PROJECT_ROOT / "routers" / "chat.py",
+    PROJECT_ROOT / "routers" / "documents.py",
+    PROJECT_ROOT / "routers" / "admin.py",
+    PROJECT_ROOT / "matters" / "lookup.py",
+    PROJECT_ROOT / "search" / "documents_repo.py",
     PROJECT_ROOT / "agents" / "rag_agent.py",
     PROJECT_ROOT / "sessions" / "manager.py",
     PROJECT_ROOT / "sessions" / "supabase_history.py",

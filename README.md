@@ -320,10 +320,37 @@ access control, feedback ownership) and prints PASS/FAIL per test.
 
 ## Migrations
 
-`supabase/migrations/` is the single source of truth (apply in order `0000`–`0006`;
-`0006` adds `delete_documents_by_file_id_before`, used by the insert-then-delete
-re-ingest fix). Legacy `sql/*` files are frozen reference only. See
+`supabase/migrations/` is the single source of truth. Apply in order; each
+migration is idempotent (`create table if not exists`, `create or replace
+function`, `if not exists` grants) so re-running is safe. Back up before
+applying and roll back by restoring the backup — see
 [`docs/operations/migrations-and-rollbacks.md`](docs/operations/migrations-and-rollbacks.md).
+
+| File | Purpose |
+|---|---|
+| `20260727000000_baseline.sql` | documents/chunks, hybrid + vector search RPCs, `set_access_context`, ivfflat index |
+| `20260727000001_tenant_and_matter_access.sql` | tenants, `user_profiles`, `matter_access` |
+| `20260727000002_legal_evidence.sql` | legal sources/documents/versions/passages |
+| `20260727000003_chat_sessions_ownership.sql` | `chat_sessions` ownership (`user_id_uuid`) + backfill note |
+| `20260727000004_jwt_authorization_retrieval.sql` | `auth.uid()`-derived RLS + RPC predicates; JWT-claims auth; `set_access_context` deprecated |
+| `20260727000005_audit_security_events.sql` | `audit_security_events` append-only table + policies |
+| `20260727000006_atomic_reingest.sql` | `delete_documents_by_file_id_before` — lets re-ingest insert new chunks before deleting stale ones, instead of the reverse |
+
+## Deployment / operations checklist
+
+- Apply migrations 0–6 and back up before applying (see the table above and
+  [`docs/operations/migrations-and-rollbacks.md`](docs/operations/migrations-and-rollbacks.md)).
+- Set `CORS_ORIGINS` to an explicit allow-list in production (wildcard is rejected).
+- Set `SUPABASE_JWT_SECRET` in production — without it, the app/worker refuse
+  to accept tokens rather than falling back to unverified decoding.
+- Set `INGEST_WORKER_TOKEN` before relying on the ingest worker's
+  `/ingest/manual` endpoint; it is required and the endpoint fails closed
+  (503) without it.
+- Never place the service-role key where user-facing chat/history reads can
+  use it. It is allowed only in `ingest/*`, `cleanup/`, `audit/events.py` and
+  `authz/service.py` admin management (enforced by a static test — see
+  [`lawfirm-rag/tests/test_service_role_static.py`](lawfirm-rag/tests/test_service_role_static.py)).
+- Keep `.env` out of version control (see `.gitignore`); no secrets are committed.
 
 ## Further reading
 
