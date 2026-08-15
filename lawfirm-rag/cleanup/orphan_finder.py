@@ -8,6 +8,29 @@ from search.service_client import make_service_client
 
 logger = logging.getLogger(__name__)
 
+_PAGE_SIZE = 1000
+
+
+def _select_all(client: Any, table: str, columns: str) -> list[dict[str, Any]]:
+    """Read every row of ``table``, paging past PostgREST's default max-rows cap.
+
+    A plain ``.select(...).execute()`` silently truncates at Supabase's
+    default max-rows (1000) on large corpora, which previously made cleanup
+    miss orphans past the first page. Pages with ``.range()`` until a page
+    comes back short.
+    """
+    rows: list[dict[str, Any]] = []
+    start = 0
+    while True:
+        res = client.table(table).select(columns).range(start, start + _PAGE_SIZE - 1).execute()
+        page = getattr(res, "data", None) or res
+        page = page if isinstance(page, list) else []
+        rows.extend(page)
+        if len(page) < _PAGE_SIZE:
+            break
+        start += _PAGE_SIZE
+    return rows
+
 
 async def run_cleanup() -> dict[str, Any]:
     """
@@ -36,7 +59,7 @@ async def run_cleanup() -> dict[str, Any]:
     }
 
     # ── Orphan vectors ────────────────────────────────────────────
-    doc_rows = client.table("documents").select("id, metadata").execute().data or []
+    doc_rows = _select_all(client, "documents", "id, metadata")
     for row in doc_rows:
         meta = row.get("metadata") or {}
         file_id = meta.get("file_id")
@@ -48,14 +71,17 @@ async def run_cleanup() -> dict[str, Any]:
                 results["errors"].append({"id": row["id"], "error": str(exc)})
 
     # ── Orphan metadata ───────────────────────────────────────────
-    meta_rows = client.table("document_metadata").select("id, file_id").execute().data or []
+    # document_metadata's primary key is file_id (there is no "id" column),
+    # so deletes below are keyed on file_id, not a nonexistent numeric id.
+    meta_rows = _select_all(client, "document_metadata", "file_id")
     for row in meta_rows:
-        if row.get("file_id") and row["file_id"] not in drive_ids:
+        file_id = row.get("file_id")
+        if file_id and file_id not in drive_ids:
             try:
-                client.table("document_metadata").delete().eq("id", row["id"]).execute()
+                client.table("document_metadata").delete().eq("file_id", file_id).execute()
                 results["metadata_deleted"] += 1
             except Exception as exc:  # noqa: BLE001
-                results["errors"].append({"id": row["id"], "error": str(exc)})
+                results["errors"].append({"file_id": file_id, "error": str(exc)})
 
     logger.info(
         "Cleanup done: %d vectors deleted, %d metadata deleted, %d errors",

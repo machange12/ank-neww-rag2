@@ -70,6 +70,16 @@ async def sync_drive_folder() -> dict[str, int]:
                 continue
 
             props = file_meta.get("properties") or {}
+            if "access_level" not in props or "matter_id" not in props:
+                logger.warning(
+                    "Scheduled sync for file_id=%s: Drive file has no custom "
+                    "access_level/matter_id properties, falling back to "
+                    "default access_level=%d matter_id=%r. Re-classify if this "
+                    "document requires a higher clearance level or a specific matter.",
+                    file_id,
+                    settings.default_ingest_access_level,
+                    settings.default_ingest_matter_id,
+                )
             try:
                 access_level = int(props.get("access_level", settings.default_ingest_access_level))
             except Exception:

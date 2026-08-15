@@ -417,6 +417,7 @@ async def stream_chat(
     human_msg = HumanMessage(content=chat_input)
 
     tokens_buffer: list[str] = []
+    stream_failed = False
     try:
         async for token in llm.astream([sys_msg, human_msg]):
             token_content = getattr(token, "content", token)
@@ -424,22 +425,29 @@ async def stream_chat(
             yield token_content
     except Exception as exc:
         logger.debug("streaming LLM failed: %s", exc)
-        return
+        stream_failed = True
 
-    # Persist this turn to chat_memory (same table + format as run_chat()).
-    # A failure here must never break the stream or drop the sources event,
-    # so it is isolated in its own try/except.
+    # Persist this turn to chat_memory (same table + format as run_chat()),
+    # even when the stream failed partway through — a partial answer is still
+    # useful conversational context for the next turn, and the alternative
+    # (dropping the turn entirely) silently breaks multi-turn continuity.
+    # A persistence failure must never break the stream or drop the sources
+    # event, so it is isolated in its own try/except.
     try:
         assembled_response = "".join(tokens_buffer)
-        history = SupabaseChatHistory(
-            session_id=session_id,
-            client=user_client,
-            user_id=user_id,
-            tenant_id=tenant_id,
-        )
-        history.add_user_message(chat_input)
-        history.add_ai_message(assembled_response)
+        if assembled_response:
+            history = SupabaseChatHistory(
+                session_id=session_id,
+                client=user_client,
+                user_id=user_id,
+                tenant_id=tenant_id,
+            )
+            history.add_user_message(chat_input)
+            history.add_ai_message(assembled_response)
     except Exception as exc:  # noqa: BLE001
         logger.debug("streaming memory persistence failed: %s", exc)
+
+    if stream_failed:
+        return
 
     yield f"data: {json.dumps({'type': 'sources', 'sources': sources})}\n\n"

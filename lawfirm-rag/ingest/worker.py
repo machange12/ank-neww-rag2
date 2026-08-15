@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hmac
 import logging
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -12,6 +13,25 @@ from ingest.downloader import DriveAuthError
 from ingest.drive_webhook import handle_drive_event, verify_drive_webhook
 
 logger = logging.getLogger(__name__)
+
+
+def _verify_manual_ingest_token(token: str | None) -> None:
+    """Require a shared secret on the manual re-ingest trigger.
+
+    This endpoint has no caller RBAC context (unlike the chat-app ingest
+    endpoints) and can trigger a full folder re-ingest, so it must never be
+    reachable without proof of operator intent. Fails closed: a missing
+    ``INGEST_WORKER_TOKEN`` configuration denies every call rather than
+    silently accepting unauthenticated requests.
+    """
+    expected = settings.ingest_worker_token or ""
+    if not expected:
+        raise HTTPException(
+            status_code=503,
+            detail="INGEST_WORKER_TOKEN is not configured; manual ingest is disabled",
+        )
+    if not token or not hmac.compare_digest(token, expected):
+        raise HTTPException(status_code=403, detail="Invalid or missing ingest worker token")
 app = FastAPI(title="Law Firm Ingest Worker", version="2.3456")
 scheduler = AsyncIOScheduler()
 
@@ -76,15 +96,21 @@ async def drive_webhook(
 
 
 @app.post("/ingest/manual")
-async def manual_ingest(request: Request) -> JSONResponse:
+async def manual_ingest(
+    request: Request,
+    x_ingest_worker_token: str | None = Header(default=None),
+) -> JSONResponse:
     """
     Trigger a full folder re-ingest (mirrors the n8n Manual Trigger).
 
-    SECURITY: The worker has no caller RBAC context, so the operator MUST
-    supply ``access_level`` and ``matter_id`` in the request body. This avoids
-    silently stamping every re-ingested document with the lowest privilege /
-    no-matter defaults (Item 1 fix).
+    SECURITY: Gated by a shared ``X-Ingest-Worker-Token`` header
+    (``_verify_manual_ingest_token``) — this endpoint has no caller RBAC
+    context and would otherwise let any reachable caller trigger a full
+    folder re-ingest. The operator MUST also supply ``access_level`` and
+    ``matter_id`` in the request body, avoiding silently stamping every
+    re-ingested document with the lowest privilege / no-matter defaults.
     """
+    _verify_manual_ingest_token(x_ingest_worker_token)
     try:
         body = await request.json()
     except Exception:

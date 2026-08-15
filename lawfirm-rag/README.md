@@ -32,7 +32,8 @@ legal corpus + citation tooling are typed, deterministic and conservative.
 | Legal evidence corpus model + status/pinpoint tooling (`corpus/legal_evidence/`) | **available** (package + migration 0002) |
 | Citation normalization + verification (`citations/`) | **available** |
 | External legal corpus ingestion (Kenya Law / NCLR / Gazette / Parliament) | **not enabled without rights** (never auto-ingested) |
-| Live database verification, linters, type-checkers in this workspace | **planned / not run here** (see final report) |
+| Offline pytest suite (64 tests), schema manifest check, frontend build | **run in this workspace, passing** |
+| Live database migration apply / integration test against a real Supabase project | **not run here** — needs live infra access; see [Weaknesses & known issues](../README.md#weaknesses--known-issues) in the root README |
 
 Status vocabulary: **available** = implemented and exercised by offline tests;
 **not enabled without rights** = deliberately disabled, requires licensed/rights
@@ -142,6 +143,7 @@ cd lawfirm-rag
 | `20260727000003_chat_sessions_ownership.sql` | `chat_sessions` ownership (user_id_uuid) + backfill note |
 | `20260727000004_jwt_authorization_retrieval.sql` | `auth.uid()`-derived RLS + RPC predicates; JWT-claims auth; `set_access_context` deprecated |
 | `20260727000005_audit_security_events.sql` | `audit_security_events` append-only table + policies |
+| `20260727000006_atomic_reingest.sql` | `delete_documents_by_file_id_before` — lets re-ingest insert new chunks before deleting stale ones, instead of the reverse |
 
 Backup before applying and roll back by restoring the backup; each migration is
 idempotent (`create table if not exists`, `create or replace function`,
@@ -199,10 +201,15 @@ idempotent (`create table if not exists`, `create or replace function`,
 
 ## Deployment / operations checklist
 
-- Apply migrations 0–5 and back up before applying (see
+- Apply migrations 0–6 and back up before applying (see
   [`docs/operations/migrations-and-rollbacks.md`](../docs/operations/migrations-and-rollbacks.md)).
 - Set `CORS_ORIGINS` to an explicit allow-list in production (wildcard is
   rejected).
+- Set `SUPABASE_JWT_SECRET` in production — without it, the worker/app now
+  refuse to accept tokens rather than falling back to unverified decoding.
+- Set `INGEST_WORKER_TOKEN` before relying on the ingest worker's
+  `/ingest/manual` endpoint; it is required and the endpoint fails closed
+  (503) without it.
 - Never place the service-role key where user-facing chat/history reads can use
   it. It is allowed only in `ingest/*`, `cleanup/`, `audit/events.py` and
   `authz/service.py` admin management.

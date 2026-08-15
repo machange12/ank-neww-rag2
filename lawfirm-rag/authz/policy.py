@@ -10,19 +10,31 @@ import re
 
 from authz.models import AccessDenied, MatterGrant, UploadDecision, UserProfile
 
-# Sensitivity markers (case-insensitive) -> minimum access level floor.
-# Conservative by design: a higher-level marker raises the floor; a
-# document is never *lowered* based on content heuristics alone.
-SENSITIVITY_MARKERS: list[tuple[int, tuple[str, ...]]] = [
-    (5, ("attorney-client privilege", "legally privileged", "privileged and confidential", "without prejudice")),
-    (4, ("attorney work product", "work product", "highly confidential")),
-    (3, ("confidential", "internal only", "restricted")),
+# Sensitivity markers -> minimum access level floor. Conservative by design:
+# a higher-level marker raises the floor; a document is never *lowered*
+# based on content heuristics alone.
+#
+# Patterns are compiled with \b word boundaries so single-word markers like
+# "restricted" or "confidential" only match as whole words — a naive
+# substring check would also flag "unrestricted"/"confidentiality", forcing
+# an unrelated word up to level >=3.
+SENSITIVITY_MARKERS: list[tuple[int, re.Pattern[str]]] = [
+    (
+        5,
+        re.compile(
+            r"(?i)\b(attorney-client\s*privilege|legally\s*privileged"
+            r"|privileged\s*and\s*confidential|without\s*prejudice)\b"
+        ),
+    ),
+    (
+        4,
+        re.compile(r"(?i)\b(attorney\s*work\s*product|work\s*product|highly\s*confidential)\b"),
+    ),
+    (
+        3,
+        re.compile(r"(?i)\b(confidential|internal\s*only|restricted)\b"),
+    ),
 ]
-
-PRIVILEGE_PATTERN = re.compile(
-    r"(?i)(attorney-client\s*privilege|legally\s*privileged|privileged\s*and\s*confidential"
-    r"|without\s*prejudice|attorney\s*work\s*product|highly\s*confidential|\bconfidential\b|\binternal\s*only\b|\brestricted\b)"
-)
 
 
 def sensitivity_floor(text: str) -> int:
@@ -35,9 +47,8 @@ def sensitivity_floor(text: str) -> int:
     if not text:
         return 1
     floor = 1
-    for level, markers in SENSITIVITY_MARKERS:
-        lowered = text.lower()
-        if any(marker in lowered for marker in markers):
+    for level, pattern in SENSITIVITY_MARKERS:
+        if pattern.search(text):
             floor = max(floor, level)
     return floor
 

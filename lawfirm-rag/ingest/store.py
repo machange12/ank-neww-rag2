@@ -118,8 +118,11 @@ async def upsert_file(
 
     embeddings = embed_chunks(chunks, file_title=file_title)
 
-    # Delete old vectors for this file (idempotent re-ingest)
-    client.rpc("delete_documents_by_file_id", {"p_file_id": file_id}).execute()
+    # Cutoff captured BEFORE the new rows are inserted: only rows older than
+    # this timestamp are stale. Insert-then-delete (instead of the previous
+    # delete-then-insert) means an insert failure below leaves the existing
+    # searchable rows in place rather than leaving the file with none.
+    reingest_cutoff = datetime.now(timezone.utc).isoformat()
 
     ingested_at = datetime.now(timezone.utc).isoformat()
     total_chunks = len(chunks)
@@ -153,6 +156,14 @@ async def upsert_file(
         for chunk, embedding in zip(chunks, embeddings)
     ]
     client.table("documents").insert(rows).execute()
+
+    # Now that the new rows are safely inserted, delete the file's OLD rows
+    # (created before reingest_cutoff). If the insert above had failed, this
+    # line never runs and the old, still-searchable rows survive.
+    client.rpc(
+        "delete_documents_by_file_id_before",
+        {"p_file_id": file_id, "p_before": reingest_cutoff},
+    ).execute()
 
     # Upsert metadata record (includes content_hash + drive_modified_time to
     # enable unchanged-file detection)

@@ -27,6 +27,13 @@ def verify_jwt(token: str) -> dict[str, Any]:
 
     secret = settings.supabase_jwt_secret
     if not secret:
+        if settings.environment == "production":
+            # Never decode unverified claims in production — a missing
+            # secret must fail closed, not silently accept forged tokens.
+            raise AuthError(
+                "UNAUTHORIZED: SUPABASE_JWT_SECRET is not configured; "
+                "refusing to accept unverified tokens in production"
+            )
         # Fallback: decode without verification (dev/test only — log a warning)
         import warnings
         warnings.warn(

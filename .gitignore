@@ -2,14 +2,6 @@
 .env
 __pycache__/
 *.pyc
-frontend/node_modules/
-uvicorn*.log
-<<<<<<< HEAD
 *.pyo
-=======
->>>>>>> c7d4b0571d87621b092e195d03135e276042d2fc
-
-.env
-.venv/
-__pycache__/
-*.pyc
+frontend/node_modules/
+*.log

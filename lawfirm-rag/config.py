@@ -36,6 +36,14 @@ class Settings(BaseSettings):
 
     drive_folder_id: str = "1btpYIgt5X9udhk6ueM8rapf5UqbPyANp"
     drive_webhook_secret: str = ""
+    # Shared secret required on worker /ingest/manual (operator-triggered
+    # re-ingest). Distinct from drive_webhook_secret since it gates a
+    # different, more powerful (arbitrary folder re-ingest) operation.
+    ingest_worker_token: str = ""
+
+    # Hard cap on a single uploaded file's size, in bytes. Prevents an
+    # unbounded multipart upload from exhausting worker memory.
+    max_upload_bytes: int = 25 * 1024 * 1024
 
     embedding_model: str = "nomic-embed-text"
     embedding_dim: int = 1536

@@ -33,27 +33,93 @@ async def _fetch_tenant_id(user_client: Any, user_id: str) -> str | None:
     return None
 
 
+def _as_existing_session_id(candidate: str | None) -> str | None:
+    """Return ``candidate`` unchanged if it is a syntactically valid session
+    UUID (the shape the server itself hands back), else None.
+
+    Client-generated fallback ids (``<sub>_<timestamp>``, minted by
+    ``build_user_ctx`` when no ``sessionId`` was supplied) never match this
+    shape, so they correctly fall through to minting a fresh session below.
+    """
+    if not candidate:
+        return None
+    try:
+        return str(uuid.UUID(candidate))
+    except (ValueError, AttributeError, TypeError):
+        return None
+
+
+async def _find_owned_session(user_client: Any, session_id: str, user_id: str) -> dict[str, Any] | None:
+    """Look up a chat_sessions row by id, scoped to the caller via RLS.
+
+    Returns the row dict if found and owned by ``user_id``, else None. Any
+    query failure (e.g. pre-0003 schema) is treated as "not found" so callers
+    fall back to minting a new session.
+    """
+    try:
+        res = (
+            user_client.table("chat_sessions")
+            .select("session_id, tenant_id")
+            .eq("session_id", session_id)
+            .eq("user_id_uuid", user_id)
+            .limit(1)
+            .execute()
+        )
+        data = getattr(res, "data", None) or res
+        if isinstance(data, list) and data:
+            return data[0]
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("chat_sessions lookup failed for session=%s: %s", session_id, exc)
+    return None
+
+
 async def build_session(
     ctx: dict[str, Any],
     rbac: dict[str, Any],
     user_client: Any,
 ) -> dict[str, Any]:
     """
-    Create a chat session row owned by the caller and return its session dict.
+    Resolve (or create) the chat session row owned by the caller and return
+    its session dict.
 
-    New sessions use a generated UUID string as the external session key
-    (legacy keys were ``<user_id>__<client_session_id>``; ownership now always
-    comes from the DB row, never from parsing the key — see migration
-    20260727000003 backfill note).
+    If the caller supplied a ``sessionId`` that already names a session row
+    they own, that session is reused (``last_activity_at`` bumped) so
+    consecutive turns form one conversation and history loads correctly.
+    Otherwise a new session is minted with a generated UUID string as the
+    external session key (legacy keys were
+    ``<user_id>__<client_session_id>``; ownership now always comes from the
+    DB row, never from parsing the key — see migration 20260727000003
+    backfill note).
 
-    The row is inserted through the caller's own client so the
-    ``chat_sessions_insert_own`` RLS policy (``user_id_uuid = auth.uid()``)
-    applies. If the row cannot be written (e.g. pre-0003 schema), we degrade to
-    the legacy derived key rather than breaking chat — legacy-backfill
-    compatibility.
+    Reads/writes run through the caller's own client so
+    ``chat_sessions_select_own`` / ``chat_sessions_insert_own`` RLS
+    (``user_id_uuid = auth.uid()``) applies. If the row cannot be written
+    (e.g. pre-0003 schema), we degrade to the legacy derived key rather than
+    breaking chat — legacy-backfill compatibility.
     """
     user_id = ctx["user_id"]
-    session_id = str(uuid.uuid4())
+    now = datetime.now(timezone.utc).isoformat()
+
+    client_session_id = _as_existing_session_id(ctx.get("session_id"))
+    if client_session_id:
+        existing = await _find_owned_session(user_client, client_session_id, user_id)
+        if existing:
+            try:
+                user_client.table("chat_sessions").update(
+                    {"last_activity_at": now}
+                ).eq("session_id", client_session_id).execute()
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("chat_sessions activity bump failed for session=%s: %s", client_session_id, exc)
+            return {
+                "session_id": client_session_id,
+                "user_id": user_id,
+                "role": rbac["role"],
+                "started_at": now,
+                "access_level": rbac["perms"]["level"],
+                "tenant_id": existing.get("tenant_id") or DEFAULT_TENANT_ID,
+            }
+
+    session_id = client_session_id or str(uuid.uuid4())
     tenant_id = await _fetch_tenant_id(user_client, user_id) or DEFAULT_TENANT_ID
 
     row = {
@@ -62,7 +128,7 @@ async def build_session(
         "user_id_uuid": user_id,     # authoritative ownership uuid (RLS key)
         "tenant_id": tenant_id,
         "status": "active",
-        "last_activity_at": datetime.now(timezone.utc).isoformat(),
+        "last_activity_at": now,
     }
 
     try:
@@ -79,7 +145,7 @@ async def build_session(
         "session_id": session_id,
         "user_id": user_id,
         "role": rbac["role"],
-        "started_at": datetime.now(timezone.utc).isoformat(),
+        "started_at": now,
         "access_level": rbac["perms"]["level"],
         "tenant_id": tenant_id,
     }

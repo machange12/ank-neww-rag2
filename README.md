@@ -89,7 +89,7 @@ and the legal-evidence/citation tooling is typed, deterministic and conservative
 
 ### Ops & tooling
 
-- Versioned SQL migrations (`supabase/migrations/` `0000`–`0005`), single source of truth; legacy `sql/*` frozen as deprecated reference.
+- Versioned SQL migrations (`supabase/migrations/` `0000`–`0006`), single source of truth; legacy `sql/*` frozen as deprecated reference.
 - Offline pytest suite (64 tests) covering authz policy, upload acceptance, citations, legal evidence, schema manifest, service-role isolation, session ownership.
 - Schema manifest verifier (`scripts/verify_schema.py`), migration runner (`scripts/apply_migrations.py`), chat/ingest smoke tests, OAuth token helper.
 - Streamlit test UI (`streamlit_app.py`) with login/chat/upload/admin tabs.
@@ -125,58 +125,84 @@ and the legal-evidence/citation tooling is typed, deterministic and conservative
 
 ## Weaknesses & known issues
 
+### Recently fixed
+
+The following were identified as weaknesses and have since been resolved:
+
+- **Multi-turn chat.** `build_session()` now looks up a client-supplied
+  `sessionId` and reuses it (bumping `last_activity_at`) when it names a
+  session row the caller owns, instead of always minting a fresh UUID.
+  Consecutive turns form one conversation and `run_chat`/`stream_chat` load
+  real prior history. (`sessions/manager.py`)
+- **Worker `/ingest/manual` was unauthenticated.** Now requires a shared
+  `X-Ingest-Worker-Token` header (`INGEST_WORKER_TOKEN` env var), verified with
+  a constant-time compare and failing closed (503) if unconfigured.
+  (`ingest/worker.py`)
+- **Scheduled sync silently downgraded documents.** Now logs a warning when a
+  Drive file has no custom `access_level`/`matter_id` properties, matching the
+  webhook path's behaviour. (`ingest/scheduler.py`)
+- **Unverified-JWT fallback.** Decoding an unverified token when
+  `SUPABASE_JWT_SECRET` is unset is now refused outright in production
+  (`environment=production`) instead of only warning. (`auth/jwt_validator.py`)
+- **Re-ingest deleted before inserting.** `upsert_file()` now inserts the new
+  chunks first, then deletes only the file's rows older than that insert (via
+  a new `delete_documents_by_file_id_before` RPC, migration `0006`). An
+  embed/insert failure now leaves the previous, still-searchable rows in
+  place instead of leaving the file with none. (`ingest/store.py`)
+- **Unbounded upload size.** Uploads are now read in capped chunks and
+  rejected with 413 past `MAX_UPLOAD_BYTES` (default 25 MB) instead of
+  buffering an arbitrarily large file into memory. (`app.py`)
+- **PostgREST row caps on bulk reads.** `cleanup/orphan_finder.py` now pages
+  past Supabase's default `max-rows` (1000) instead of silently missing
+  orphans past the first page — this also surfaced a real bug where orphaned
+  `document_metadata` rows were deleted by a nonexistent `id` column instead
+  of `file_id`, so that half of nightly cleanup was silently a no-op.
+  `/documents/intelligence` now has an explicit `.limit()`.
+- **Deprecated RLS dead code.** `rls/access_context.py` (confirmed unreferenced
+  anywhere) has been removed.
+- **Naive sensitivity substring matching.** `authz/policy.py` now matches
+  sensitivity markers with word-boundary regex, so e.g. "unrestricted" no
+  longer falsely trips the "restricted" ≥3 floor.
+- **Streaming turns could be lost.** A partial answer is now persisted to
+  `chat_memory` even when the SSE stream fails mid-way, instead of the turn
+  being dropped entirely. (`agents/rag_agent.py`)
+- **No token-expiry handling; 401s didn't redirect.** The frontend now signs
+  the user out (and shows a message) on any 401 via a central `apiFetch`
+  wrapper, and proactively signs out when the JWT's `exp` is reached.
+- **Fabricated client-side source relevance.** The frontend now renders the
+  backend's real `sources` instead of regex-deriving fake relevance bars from
+  `[...]` citations in the answer text.
+- **Hardcoded `sessionId: "ank-dashboard"`** — replaced with the real
+  per-conversation `session_id` the backend returns, which is what makes the
+  multi-turn fix above actually work end-to-end from the UI.
+- **Hardcoded footer "Active user: 1"** — replaced with the caller's real
+  access level from `/auth/login`.
+- **Broken `ingest-file` "skipped" check** — fixed to check
+  `data.status === "skipped"` (the backend returns `{"status": "skipped"}`,
+  never a `skipped` boolean).
+- **Unguarded `localStorage` `JSON.parse`** for History/Saved — now goes
+  through a `safeParseJSON` helper so a corrupted value falls back to `[]`
+  instead of blanking the app.
+- **Build hygiene:** `frontend/package.json` now pins exact installed
+  versions instead of `"latest"`; the committed merge-conflict markers in
+  `.gitignore` are gone; the 8 tracked log files (`uvicorn*.log`, `vite*.log`,
+  `worker*.log`, `streamlit*.log`) have been untracked (kept on disk, no
+  longer in git) and `.gitignore` now covers `*.log` generally.
+
 ### Backend
 
-- **Multi-turn chat is effectively broken.** `build_session()` mints a new UUID
-  on every request and the app never maps a client-supplied `sessionId` back to a
-  persisted session (the supplied id is only used in the DB-write-failure
-  fallback). Consecutive turns don't form one conversation unless the client
-  re-sends the server-returned `session_id`, and `run_chat` loads history for an
-  empty fresh session each time. (`sessions/manager.py:56`, `app.py:331`)
-- **Worker `/ingest/manual` is unauthenticated.** `ingest/worker.py:78` has no
-  token or channel-token check; any reachable caller can trigger a full folder
-  re-ingest with arbitrary `access_level`/`matter_id`.
-- **Scheduled sync can silently downgrade documents.** If a Drive file has no
-  custom properties, `ingest/scheduler.py:72` stamps it
-  `access_level=1`/`matter_id=""` with **no warning** (the webhook path logs
-  loudly by comparison).
-- **Unverified-JWT fallback.** `auth/jwt_validator.py:28` decodes tokens
-  **without signature verification** when `SUPABASE_JWT_SECRET` is missing (only
-  a `warnings.warn`). Misconfiguration → forged claims.
-- **Re-ingest deletes before inserting.** `ingest/store.py` deletes a file's
-  vectors before the new insert; an insert/embed failure leaves the file
-  unsearchable until a later run (no transaction).
-- **Unbounded upload size.** `app.py:606` reads the whole file into memory with
-  no cap (memory-DoS vector).
-- **PostgREST row caps on bulk reads.** Cleanup and `/documents/intelligence`
-  select without `.limit()`; Supabase's default `max-rows` (1000) silently
-  truncates on large corpora.
-- **Deprecated RLS layer is mostly dead code.** `rls/access_context.py` is never
-  called; migration 0004 deprecates `set_access_context` but the package remains.
-- **Sensitivity markers are naive substring matches** (`authz/policy.py`), so
-  words like "restricted"/"confidential" anywhere in a doc force level ≥3
-  (conservative but can mis-stamp innocuous files).
-- **Streaming turns can be lost.** If the SSE stream fails mid-way, the
-  user/assistant turn isn't persisted (`agents/rag_agent.py:425`).
+- (none currently tracked beyond the items above)
 
 ### Frontend
 
-- **No token-expiry handling; token in `localStorage`** — stale/expired tokens
-  only fail on the next API call and 401s never redirect to login; localStorage
-  is XSS-susceptible.
-- **Source relevance is fabricated client-side.** The backend returns real
-  `sources` but the frontend ignores them and re-derives fake relevance bars by
-  regex-stripping `[...]` citations from the answer text.
 - **`Matters`, `Team`, and `Settings` are placeholder-quality** (fake/hardcoded
   data); there is no admin UI despite the backend `/admin/users` endpoint.
-- **History/Saved are localStorage-only**, capped at 25, with unguarded
-  `JSON.parse` and no error boundary (a corrupt value blanks the app).
-- **Hardcoded values:** `sessionId: "ank-dashboard"`, brand name, footer
-  "Active user: 1". The `ingest-file` "skipped" check is broken because the
-  backend returns `{"status":"skipped"}` not `skipped:true`.
-- **Build hygiene:** `package.json` pins everything to `"latest"` (non-reproducible);
-  **merge-conflict markers are committed** into `.gitignore` and `vite*.log`; log
-  files are tracked in git.
+  This is a real feature build, not a bug fix, and hasn't been attempted here.
+- **History/Saved remain localStorage-only**, capped at 25, with no error
+  boundary beyond the `JSON.parse` guard above — by design, not yet backed by
+  a server-side store.
+- **Hardcoded brand name/copy** ("ANK RAG", "Just Giving Solutions") — cosmetic
+  branding, not a functional weakness, left as-is.
 
 ### Repo / deployment state
 
@@ -188,12 +214,13 @@ and the legal-evidence/citation tooling is typed, deterministic and conservative
 - **The remote Supabase database appears to be on a legacy schema.** As of the
   last integration run, `query_feedback` and `schema_migrations` tables were
   missing and `chat_sessions` lacked `tenant_id`/`user_id_uuid` — i.e. versioned
-  migrations `0001`–`0005` have **not** been applied. Consequence: chat sessions
+  migrations `0001`–`0006` have **not** been applied. Consequence: chat sessions
   can't be persisted (the endpoint falls back to a derived key), `/sessions` and
   `/feedback` fail their checks, and a direct-Postgres migration run is blocked
   by DNS from the dev machine. **Apply the migrations via the Supabase CLI
   (`supabase link` + `supabase db push`) or the SQL Editor before relying on
-  session/history/feedback features.**
+  session/history/feedback features.** These three items require live infra
+  access and have not been addressed in this pass.
 
 ---
 
@@ -207,7 +234,7 @@ FastAPI app (app.py)  +  ingest worker (ingest/worker.py)
    Supabase PostgREST        ingest/worker paths
         │                       │
         ▼                       ▼
-   Postgres + RLS + migrations 0000..0005
+   Postgres + RLS + migrations 0000..0006
         ├─ chat_sessions / chat_memory        (ownership RLS: user_id_uuid)
         ├─ user_profiles / matter_access      (authorization facts)
         ├─ documents / document_metadata      (retrieval, matter + level RLS)
@@ -293,8 +320,9 @@ access control, feedback ownership) and prints PASS/FAIL per test.
 
 ## Migrations
 
-`supabase/migrations/` is the single source of truth (apply in order `0000`–`0005`).
-Legacy `sql/*` files are frozen reference only. See
+`supabase/migrations/` is the single source of truth (apply in order `0000`–`0006`;
+`0006` adds `delete_documents_by_file_id_before`, used by the insert-then-delete
+re-ingest fix). Legacy `sql/*` files are frozen reference only. See
 [`docs/operations/migrations-and-rollbacks.md`](docs/operations/migrations-and-rollbacks.md).
 
 ## Further reading

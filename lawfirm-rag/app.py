@@ -122,6 +122,30 @@ class DriveFileIngestBody(BaseModel):
     matter_id: str | None = None
 
 
+async def _read_upload_capped(file: UploadFile, max_bytes: int) -> bytes:
+    """Read an UploadFile into memory, aborting with 413 past ``max_bytes``.
+
+    Reads in fixed-size chunks so an unbounded upload is rejected before the
+    whole body is buffered (memory-DoS guard), instead of reading the entire
+    file first and only then discovering it's too large.
+    """
+    chunk_size = 1024 * 1024
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = await file.read(chunk_size)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > max_bytes:
+            raise HTTPException(
+                status_code=413,
+                detail=f"File exceeds the {max_bytes // (1024 * 1024)} MB upload limit",
+            )
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
 def _resolve_profile_role_level(client: Any, user_id: str | None) -> tuple[str | None, int]:
     """Resolve role/access_level from public.user_profiles (DB source of truth).
 
@@ -603,7 +627,7 @@ async def upload_document(
         if not administered:
             raise HTTPException(status_code=403, detail=f"FORBIDDEN: cannot administer matter {requested_matter!r}")
 
-    contents = await file.read()
+    contents = await _read_upload_capped(file, settings.max_upload_bytes)
     try:
         from ingest.extract import extract_text
 
@@ -692,6 +716,7 @@ async def list_document_intelligence(authorization: str | None = Header(default=
         .select("file_id, file_title, doc_type, legal_entities, ingested_at")
         .lte("access_level", ctx["access_level"])
         .order("ingested_at", desc=True)
+        .limit(1000)  # explicit cap — PostgREST's implicit default is the same value
         .execute()
     )
     data = getattr(res, "data", res) or []

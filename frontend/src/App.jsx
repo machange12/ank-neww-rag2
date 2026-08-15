@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   BarChart3,
   BookOpenText,
@@ -61,22 +61,39 @@ const SAMPLE_MATTERS = [
   { id: "M-2024-001", name: "Commercial litigation", access: "Matter team" },
 ];
 
-function sourceTitleFromCitation(citation) {
-  return citation.replace(/^\[|\]$/g, "").trim() || "Retrieved source";
+function sourcesFromResponse(rawSources) {
+  // Uses the backend's real retrieved-document sources (title/url/section) —
+  // never re-derived from the answer text, which previously produced
+  // fabricated relevance bars unrelated to actual retrieval.
+  if (!Array.isArray(rawSources) || !rawSources.length) {
+    return [];
+  }
+  return rawSources.map((source, index) => ({
+    id: source.file_id || source.url || `source-${index}`,
+    title: source.title || "Unknown document",
+    meta: source.section_heading || (source.file_id ? `File: ${source.file_id}` : "Retrieved document"),
+    url: source.url || "",
+  }));
 }
 
-function extractSources(answer) {
-  const citations = Array.from(answer.matchAll(/\[[^\]]+\]/g)).map((match) => match[0]);
-  const unique = [...new Set(citations)].slice(0, 8);
-  if (!unique.length) {
-    return [{ id: "rag", title: "RAG response", meta: "Generated answer", relevance: 78 }];
+function safeParseJSON(raw, fallback) {
+  if (!raw) return fallback;
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed ?? fallback;
+  } catch {
+    return fallback;
   }
-  return unique.map((citation, index) => ({
-    id: citation,
-    title: sourceTitleFromCitation(citation),
-    meta: "Citation found in answer",
-    relevance: Math.max(48, 94 - index * 9),
-  }));
+}
+
+function decodeJwtExpiry(token) {
+  try {
+    const payload = token.split(".")[1];
+    const json = JSON.parse(atob(payload.replace(/-/g, "+").replace(/_/g, "/")));
+    return typeof json.exp === "number" ? json.exp * 1000 : null;
+  } catch {
+    return null;
+  }
 }
 
 function initials(label) {
@@ -213,15 +230,24 @@ export default function ANKRagDashboard() {
   const [password, setPassword] = useState("");
   const [token, setToken] = useState(() => localStorage.getItem("ank_rag_token") || "");
   const [userLabel, setUserLabel] = useState(() => localStorage.getItem("ank_rag_user") || "Not signed in");
+  const [accessLevel, setAccessLevel] = useState(() => {
+    const stored = localStorage.getItem("ank_rag_access_level");
+    return stored ? Number(stored) : null;
+  });
+  // Conversation session id, scoped to this browser tab's app session (not
+  // persisted to localStorage) — kept across turns so the backend continues
+  // the same conversation instead of minting a fresh one on every message.
+  const [sessionId, setSessionId] = useState(null);
   const [answer, setAnswer] = useState("");
+  const [sources, setSources] = useState([]);
   const [status, setStatus] = useState("Ready");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [isAsking, setIsAsking] = useState(false);
   const [lastLatency, setLastLatency] = useState(null);
-  const [history, setHistory] = useState(() => JSON.parse(localStorage.getItem("ank_rag_history") || "[]"));
-  const [saved, setSaved] = useState(() => JSON.parse(localStorage.getItem("ank_rag_saved") || "[]"));
+  const [history, setHistory] = useState(() => safeParseJSON(localStorage.getItem("ank_rag_history"), []));
+  const [saved, setSaved] = useState(() => safeParseJSON(localStorage.getItem("ank_rag_saved"), []));
   const [compactMode, setCompactMode] = useState(false);
   const [documents, setDocuments] = useState([]);
   const [driveFiles, setDriveFiles] = useState([]);
@@ -234,7 +260,6 @@ export default function ANKRagDashboard() {
   const [uploadMatterId, setUploadMatterId] = useState("");
   const [uploadAccessLevel, setUploadAccessLevel] = useState("1");
 
-  const sources = useMemo(() => extractSources(answer), [answer]);
   const queryCount = history.length;
 
   useEffect(() => {
@@ -243,11 +268,38 @@ export default function ANKRagDashboard() {
     }
   }, [token]);
 
+  // Proactively sign out once the JWT expires, instead of leaving a dead
+  // token in localStorage that only surfaces as a failed request later.
+  useEffect(() => {
+    if (!token) return undefined;
+    const expiresAt = decodeJwtExpiry(token);
+    if (!expiresAt) return undefined;
+    const msRemaining = expiresAt - Date.now();
+    if (msRemaining <= 0) {
+      signOut("Your session expired. Please sign in again.");
+      return undefined;
+    }
+    const timer = setTimeout(() => signOut("Your session expired. Please sign in again."), msRemaining);
+    return () => clearTimeout(timer);
+  }, [token]);
+
   function authHeaders(extra = {}) {
     return {
       ...extra,
       Authorization: `Bearer ${token}`,
     };
+  }
+
+  // Central fetch wrapper for authenticated API calls: on a 401 (expired or
+  // invalid token) it signs the user out and redirects to the login screen
+  // instead of letting every caller fail separately with a raw error.
+  async function apiFetch(path, options = {}) {
+    const response = await fetch(`${API_BASE}${path}`, options);
+    if (response.status === 401) {
+      signOut("Your session has expired or is no longer valid. Please sign in again.");
+      throw new Error("UNAUTHORIZED");
+    }
+    return response;
   }
 
   async function login(event) {
@@ -273,6 +325,11 @@ export default function ANKRagDashboard() {
       localStorage.setItem("ank_rag_token", data.access_token);
       setUserLabel(email);
       localStorage.setItem("ank_rag_user", email);
+      setAccessLevel(data.access_level ?? null);
+      if (data.access_level != null) {
+        localStorage.setItem("ank_rag_access_level", String(data.access_level));
+      }
+      setSessionId(null);
       setStatus("Signed in");
       setActiveNav("Research");
     } catch (err) {
@@ -298,13 +355,16 @@ export default function ANKRagDashboard() {
     setStatus("Searching secured documents");
     const started = performance.now();
     try {
-      const response = await fetch(`${API_BASE}/lawfirm-chat-trigger-006`, {
+      // Send back the session id the server minted on the previous turn so
+      // the backend continues the same conversation (and loads prior turns
+      // as chat history) instead of starting a fresh session every request.
+      const response = await apiFetch("/lawfirm-chat-trigger-006", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ chatInput: query, sessionId: "ank-dashboard" }),
+        body: JSON.stringify({ chatInput: query, ...(sessionId ? { sessionId } : {}) }),
       });
       const responseText = await response.text();
       let data = {};
@@ -315,37 +375,53 @@ export default function ANKRagDashboard() {
       }
       if (!response.ok) throw new Error(data.error || data.detail || "RAG request failed");
       const output = data.output || "";
+      const responseSources = sourcesFromResponse(data.sources);
       const latency = ((performance.now() - started) / 1000).toFixed(1);
-      const item = { id: crypto.randomUUID(), query, answer: output, latency, createdAt: new Date().toISOString() };
+      const item = {
+        id: crypto.randomUUID(),
+        query,
+        answer: output,
+        sources: responseSources,
+        latency,
+        createdAt: new Date().toISOString(),
+      };
       const nextHistory = [item, ...history].slice(0, 25);
       localStorage.setItem("ank_rag_history", JSON.stringify(nextHistory));
       setHistory(nextHistory);
       setAnswer(output);
-      setActiveSource("rag");
+      setSources(responseSources);
+      setActiveSource(responseSources[0]?.id || "rag");
       setLastLatency(latency);
+      if (data.session_id) setSessionId(data.session_id);
       setStatus("Answer ready");
       setActiveNav("Research");
     } catch (err) {
-      setError(err.message);
-      setStatus("Request failed");
+      if (err.message !== "UNAUTHORIZED") {
+        setError(err.message);
+        setStatus("Request failed");
+      }
     } finally {
       setIsAsking(false);
     }
   }
 
-  function signOut() {
+  function signOut(message = "") {
     localStorage.removeItem("ank_rag_token");
     localStorage.removeItem("ank_rag_user");
+    localStorage.removeItem("ank_rag_access_level");
     setToken("");
     setUserLabel("Not signed in");
+    setAccessLevel(null);
+    setSessionId(null);
     setStatus("Signed out");
-    setError("");
+    setError(message);
     setNotice("");
   }
 
   function restoreHistory(item) {
     setQuery(item.query);
     setAnswer(item.answer);
+    setSources(item.sources || []);
     setLastLatency(item.latency);
     setActiveNav("Research");
     setStatus("Restored from history");
@@ -376,7 +452,7 @@ export default function ANKRagDashboard() {
     setIsLoadingDocuments(true);
     setDocumentStatus("Loading documents");
     try {
-      const response = await fetch(`${API_BASE}/documents`, {
+      const response = await apiFetch("/documents", {
         headers: authHeaders(),
       });
       const responseText = await response.text();
@@ -390,8 +466,10 @@ export default function ANKRagDashboard() {
       setDocuments(data.documents || []);
       setDocumentStatus(`Loaded ${(data.documents || []).length} documents`);
     } catch (err) {
-      setError(err.message);
-      setDocumentStatus("Document load failed");
+      if (err.message !== "UNAUTHORIZED") {
+        setError(err.message);
+        setDocumentStatus("Document load failed");
+      }
     } finally {
       setIsLoadingDocuments(false);
     }
@@ -410,7 +488,7 @@ export default function ANKRagDashboard() {
       formData.append("matter_id", uploadMatterId);
       formData.append("access_level", uploadAccessLevel);
 
-      const response = await fetch(`${API_BASE}/documents/upload`, {
+      const response = await apiFetch("/documents/upload", {
         method: "POST",
         headers: authHeaders(),
         body: formData,
@@ -428,8 +506,10 @@ export default function ANKRagDashboard() {
       setDocumentStatus("Upload indexed");
       await loadDocuments();
     } catch (err) {
-      setError(err.message);
-      setDocumentStatus("Upload failed");
+      if (err.message !== "UNAUTHORIZED") {
+        setError(err.message);
+        setDocumentStatus("Upload failed");
+      }
     } finally {
       setIsUploading(false);
     }
@@ -440,7 +520,7 @@ export default function ANKRagDashboard() {
     setIsLoadingDrive(true);
     setDocumentStatus("Loading Drive files");
     try {
-      const response = await fetch(`${API_BASE}/documents/drive-files`, {
+      const response = await apiFetch("/documents/drive-files", {
         headers: authHeaders(),
       });
       const responseText = await response.text();
@@ -454,8 +534,10 @@ export default function ANKRagDashboard() {
       setDriveFiles(data.files || []);
       setDocumentStatus(`Loaded ${(data.files || []).length} Drive files`);
     } catch (err) {
-      setError(err.message);
-      setDocumentStatus("Drive load failed");
+      if (err.message !== "UNAUTHORIZED") {
+        setError(err.message);
+        setDocumentStatus("Drive load failed");
+      }
     } finally {
       setIsLoadingDrive(false);
     }
@@ -467,7 +549,7 @@ export default function ANKRagDashboard() {
     setIsIngestingDrive(true);
     setDocumentStatus("Indexing Drive file");
     try {
-      const response = await fetch(`${API_BASE}/documents/ingest-file`, {
+      const response = await apiFetch("/documents/ingest-file", {
         method: "POST",
         headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({ file_id: fileId, matter_id: uploadMatterId }),
@@ -481,11 +563,16 @@ export default function ANKRagDashboard() {
       }
       if (!response.ok) throw new Error(data.error || data.detail || "Drive ingest failed");
       setNotice(`Drive file indexed: ${data.file_id || fileId}.`);
-      setDocumentStatus(data.skipped ? "Drive file unchanged" : "Drive file indexed");
+      // Backend returns {"status": "skipped"} for an unchanged file, never a
+      // "skipped" boolean — the previous check (data.skipped) was always
+      // falsy and this status line never reflected an actual skip.
+      setDocumentStatus(data.status === "skipped" ? "Drive file unchanged" : "Drive file indexed");
       await loadDocuments();
     } catch (err) {
-      setError(err.message);
-      setDocumentStatus("Drive ingest failed");
+      if (err.message !== "UNAUTHORIZED") {
+        setError(err.message);
+        setDocumentStatus("Drive ingest failed");
+      }
     } finally {
       setIsIngestingDrive(false);
     }
@@ -497,7 +584,7 @@ export default function ANKRagDashboard() {
     setIsIngestingDrive(true);
     setDocumentStatus("Indexing Drive folder");
     try {
-      const response = await fetch(`${API_BASE}/documents/ingest-folder`, {
+      const response = await apiFetch("/documents/ingest-folder", {
         method: "POST",
         headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({ matter_id: uploadMatterId }),
@@ -514,8 +601,10 @@ export default function ANKRagDashboard() {
       setDocumentStatus("Folder ingest complete");
       await loadDocuments();
     } catch (err) {
-      setError(err.message);
-      setDocumentStatus("Folder ingest failed");
+      if (err.message !== "UNAUTHORIZED") {
+        setError(err.message);
+        setDocumentStatus("Folder ingest failed");
+      }
     } finally {
       setIsIngestingDrive(false);
     }
@@ -639,27 +728,30 @@ export default function ANKRagDashboard() {
           <section className="w-full flex-shrink-0 border-b border-gray-200 bg-white p-3 lg:w-64 lg:border-b-0 lg:border-r">
             <div className="mb-2 text-[10px] uppercase tracking-widest text-gray-400">Sources retrieved</div>
             <div className="max-h-56 overflow-y-auto lg:max-h-none">
-              {sources.map((source) => (
-                <button
-                  key={source.id}
-                  onClick={() => setActiveSource(source.id)}
-                  className={`mb-2 w-full rounded-lg border p-2.5 text-left transition-colors ${
-                    activeSource === source.id
-                      ? "border-blue-300 bg-blue-50"
-                      : "border-gray-200 bg-white hover:border-blue-200"
-                  }`}
-                >
-                  <div className={`truncate text-xs font-medium ${activeSource === source.id ? "text-blue-700" : "text-gray-800"}`}>
-                    {source.title}
-                  </div>
-                  <div className={`mt-0.5 text-[11px] ${activeSource === source.id ? "text-blue-500" : "text-gray-400"}`}>
-                    {source.meta}
-                  </div>
-                  <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-gray-200">
-                    <div className="h-full rounded-full bg-blue-500" style={{ width: `${source.relevance}%` }} />
-                  </div>
-                </button>
-              ))}
+              {sources.length === 0 ? (
+                <div className="rounded-lg border border-dashed border-gray-300 bg-white px-3 py-4 text-center text-xs text-gray-400">
+                  No sources for this answer yet.
+                </div>
+              ) : (
+                sources.map((source) => (
+                  <button
+                    key={source.id}
+                    onClick={() => setActiveSource(source.id)}
+                    className={`mb-2 w-full rounded-lg border p-2.5 text-left transition-colors ${
+                      activeSource === source.id
+                        ? "border-blue-300 bg-blue-50"
+                        : "border-gray-200 bg-white hover:border-blue-200"
+                    }`}
+                  >
+                    <div className={`truncate text-xs font-medium ${activeSource === source.id ? "text-blue-700" : "text-gray-800"}`}>
+                      {source.title}
+                    </div>
+                    <div className={`mt-0.5 truncate text-[11px] ${activeSource === source.id ? "text-blue-500" : "text-gray-400"}`}>
+                      {source.meta}
+                    </div>
+                  </button>
+                ))
+              )}
             </div>
           </section>
 
@@ -671,7 +763,7 @@ export default function ANKRagDashboard() {
             { label: "Queries today", value: String(queryCount), accent: "text-blue-600", icon: BarChart3 },
             { label: "Docs indexed", value: String(documents.length), accent: "text-gray-800", icon: BookOpenText },
             { label: "Last response", value: lastLatency ? `${lastLatency} s` : "-", accent: "text-green-600", icon: CheckCircle2 },
-            { label: "Active user", value: "1", accent: "text-gray-800", icon: Users },
+            { label: "Access level", value: accessLevel != null ? String(accessLevel) : "-", accent: "text-gray-800", icon: Users },
           ].map((metric) => (
             <div key={metric.label} className="rounded-lg bg-gray-50 px-3 py-2">
               <div className="mb-1 flex items-center gap-1.5 text-[10px] uppercase tracking-widest text-gray-400">
