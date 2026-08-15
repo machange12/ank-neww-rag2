@@ -6,6 +6,12 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 ROOT_DIR = Path(__file__).resolve().parent.parent
 
 
+def _parse_csv_list(value: str | None) -> list[str]:
+    if not value:
+        return []
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=ROOT_DIR / ".env",
@@ -43,6 +49,30 @@ class Settings(BaseSettings):
     # Per-user sliding-window rate limiting on chat endpoints
     rate_limit_rpm: int = 20
     rate_limit_window_seconds: int = 60
+
+    # Deployment environment. "production" rejects allow_origins=["*"].
+    environment: str = "development"
+
+    # CORS allow-list. In production a strict list is required and "*"
+    # is rejected. For local development you may set
+    #   CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
+    cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173,http://localhost:8000"
+
+    @property
+    def cors_origins_list(self) -> list[str]:
+        return _parse_csv_list(self.cors_origins)
+
+    @property
+    def cors_allow_origins(self) -> list[str]:
+        origins = self.cors_origins_list
+        if self.environment == "production":
+            if "*" in origins:
+                raise ValueError(
+                    "CORS: allow_origins=['*'] is not permitted in production. "
+                    "Set CORS_ORIGINS to an explicit allow-list."
+                )
+            return origins
+        return origins or ["*"]
 
     # Ingest defaults used ONLY by paths without a caller in scope (Drive webhook).
     # User-triggered ingest endpoints MUST pass access_level + matter_id explicitly.

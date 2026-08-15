@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import io
 import logging
-from typing import Any
+from typing import Any, Callable
 
 from google.auth.exceptions import RefreshError
 from google.oauth2.credentials import Credentials
@@ -111,6 +111,7 @@ def download_file(file_id: str, mime_type: str) -> bytes:
 async def ingest_folder(
     access_level: int,
     matter_id: str,
+    classify: Callable[[str], tuple[int, str]] | None = None,
 ) -> dict[str, Any]:
     """
     Full folder re-ingest: list → download → embed → store.
@@ -119,6 +120,12 @@ async def ingest_folder(
     requesting user's RBAC (max access the caller can read) and the matter
     scope they are acting inside. The caller (chat-app endpoint) is in scope
     and MUST supply these — there is no safe default.
+
+    ``classify`` (optional) is a server-side classifier ``text -> (access_level,
+    matter_id)``. When provided it REPLACES the Drive custom-properties path:
+    per-file text is extracted and classified so client-supplied properties are
+    never treated as authorization facts. When None (e.g. the unauthenticated
+    worker path), the legacy Drive-property behaviour is preserved.
     """
     from ingest.store import check_last_modified, upsert_file
 
@@ -143,13 +150,19 @@ async def ingest_folder(
                 continue
 
             raw = download_file(file_id, f["mimeType"])
-            # Drive file custom properties can carry per-file access info.
-            props = f.get("properties") or {}
-            try:
-                file_access_level = int(props.get("access_level", access_level or 1))
-            except Exception:
-                file_access_level = int(access_level or 1)
-            file_matter_id = props.get("matter_id", matter_id or "")
+            if classify is not None:
+                from ingest.extract import extract_text
+
+                text, _ = extract_text(raw, f["mimeType"])
+                file_access_level, file_matter_id = classify(text)
+            else:
+                # Drive file custom properties can carry per-file access info.
+                props = f.get("properties") or {}
+                try:
+                    file_access_level = int(props.get("access_level", access_level or 1))
+                except Exception:
+                    file_access_level = int(access_level or 1)
+                file_matter_id = props.get("matter_id", matter_id or "")
 
             await upsert_file(
                 file_id=file_id,

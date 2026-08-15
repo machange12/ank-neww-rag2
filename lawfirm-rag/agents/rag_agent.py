@@ -14,7 +14,6 @@ from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_classic.retrievers.multi_query import MultiQueryRetriever
 
 from search.hybrid import hybrid_search
-from search.supabase_client import make_service_client
 from sessions.supabase_history import SupabaseChatHistory
 from config import settings
 from providers import make_chat_llm, get_embeddings
@@ -264,6 +263,8 @@ async def run_chat(
     system_prefix: str,
     chat_input: str,
     user_client: Any,
+    user_id: str,
+    tenant_id: str | None = None,
 ) -> dict[str, Any]:
     """
     Run one turn of the RAG chat.
@@ -274,8 +275,8 @@ async def run_chat(
     - Injects the retrieved context directly into the system prompt and generates
       the answer with a single LLM call (no multi-tool-call agent loop, which was
       prone to re-writing the query with junk and giving up).
-    - Persists the turn to the Supabase chat_memory table so multi-turn context
-      is preserved.
+    - Persists the turn to the Supabase chat_memory table through the caller's
+      own client (RLS-enforced ownership; ``user_id`` is stamped on each row).
     """
     llm = make_chat_llm(streaming=False)
 
@@ -315,9 +316,12 @@ async def run_chat(
     )
 
     # Load recent history (Supabase-backed) so multi-turn context is preserved.
+    # Reads run through the caller's own client; RLS returns only their rows.
     history = SupabaseChatHistory(
         session_id=session_id,
-        client=make_service_client(),
+        client=user_client,
+        user_id=user_id,
+        tenant_id=tenant_id,
     )
     try:
         chat_history: list[Any] = history.messages[-settings.context_window * 2:]
@@ -353,6 +357,8 @@ async def stream_chat(
     system_prefix: str,
     chat_input: str,
     user_client: Any,
+    user_id: str,
+    tenant_id: str | None = None,
 ):
     """
     Async generator that yields tokens from the LLM as they arrive.
@@ -362,7 +368,8 @@ async def stream_chat(
       system message before streaming (no ungrounded answers).
     - Short-circuits on zero-doc retrieval with the canned no-result response.
     - Persists the full turn to the same chat_memory table run_chat() uses
-      once streaming completes; a memory write failure never breaks the stream.
+      once streaming completes, through the caller's own client (RLS-enforced
+      ownership); a memory write failure never breaks the stream.
     """
     llm = make_chat_llm(streaming=True)
 
@@ -426,7 +433,9 @@ async def stream_chat(
         assembled_response = "".join(tokens_buffer)
         history = SupabaseChatHistory(
             session_id=session_id,
-            client=make_service_client(),
+            client=user_client,
+            user_id=user_id,
+            tenant_id=tenant_id,
         )
         history.add_user_message(chat_input)
         history.add_ai_message(assembled_response)

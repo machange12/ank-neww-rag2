@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import tempfile
 from pathlib import Path
@@ -12,15 +13,20 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, field_validator
 
 from agents.rag_agent import run_chat, stream_chat
+from audit import events as audit_events
 from auth.jwt_validator import AuthError, build_user_ctx, verify_jwt
+from authz import service as authz_service
+from authz.models import AccessDenied, UploadDecision
+from authz.policy import classify_upload
 from rbac.checker import build_rbac_block
 from rbac.role_matrix import ROLE_MATRIX
 from ratelimit import rate_limiter
-from rls.access_context import set_access_context
 from rls.filter_builder import build_rls_filter
-from search.supabase_client import make_anon_client, make_service_client, make_user_client
+from search.supabase_client import make_anon_client, make_user_client
 from sessions.manager import build_session, list_user_sessions
 from config import settings
+
+logger = logging.getLogger(__name__)
 
 # LangSmith / LangChain tracing environment (optional). If an API key is set
 # enable the v2 tracing environment so downstream LangChain tooling can pick it up.
@@ -32,12 +38,13 @@ if settings.langchain_api_key:
 app = FastAPI(title="Law Firm Secure RAG", version="2.3456")
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
+# CORS: allow-list from environment. "*" is rejected in production.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.cors_allow_origins,
     allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
 if (STATIC_DIR / "assets").exists():
@@ -242,15 +249,28 @@ def _payload_from_token(token: str) -> dict[str, Any]:
             raise local_error from exc
 
 
-def _rbac_level(ctx: dict[str, Any], rbac: dict[str, Any]) -> int:
-    return max(int(ctx.get("access_level") or 1), int((rbac.get("perms") or {}).get("level") or 1))
-
-
 def _require_ingest(authorization: str | None) -> tuple[dict, dict]:
+    # NOTE: this JWT-claim role check is a coarse pre-gate only. The write is
+    # actually authorized by the DB profile + matter grants + auth_* RPCs.
     ctx, rbac = _auth_ctx_from_header(authorization)
     if not (rbac.get("perms") or {}).get("ingest"):
         raise HTTPException(status_code=403, detail="FORBIDDEN: your role cannot ingest documents")
     return ctx, rbac
+
+
+def _assert_admin(authorization: str | None) -> tuple[dict, Any]:
+    """Require the explicit DB admin flag (user_profiles.admin), not a level.
+
+    Returns (ctx, user_client) so callers can run admin-management writes.
+    """
+    token = _token_from_header(authorization)
+    ctx, _ = _ctx_rbac_from_token(token)
+    user_client = make_user_client(token)
+    try:
+        authz_service.assert_admin(user_client, ctx["user_id"])
+    except AccessDenied as exc:
+        raise HTTPException(status_code=403, detail=exc.message) from exc
+    return ctx, user_client
 
 
 @app.post("/lawfirm-chat-trigger-006", response_model=ChatResponse)
@@ -267,6 +287,7 @@ async def chat_webhook(
         except AuthError as e:
             raise HTTPException(status_code=401, detail=str(e))
         ctx = build_user_ctx(payload, raw_headers, body)
+        user_client = make_user_client(token)
     else:
         try:
             user_client, token = await _resolve_user_client(body.get("authorization") if isinstance(body, dict) else None)  # type: ignore
@@ -285,13 +306,8 @@ async def chat_webhook(
     await rate_limiter.check(ctx["user_id"])
 
     rbac = build_rbac_block(ctx, body)
-    session = build_session(ctx, rbac)
+    session = await build_session(ctx, rbac, user_client)
     rls = build_rls_filter(rbac, ctx, body)
-
-    if authorization:
-        user_client = make_user_client(token)
-
-    await set_access_context(user_client, ctx, rbac, rls)
 
     chat_input = rls.get("chat_input") or ""
     if not chat_input:
@@ -302,6 +318,8 @@ async def chat_webhook(
         system_prefix=rbac["system_prompt_prefix"],
         chat_input=chat_input,
         user_client=user_client,
+        user_id=ctx["user_id"],
+        tenant_id=session.get("tenant_id"),
     )
     return ChatResponse(
         answer=result["answer"],
@@ -330,6 +348,7 @@ async def chat_webhook_stream(
         except AuthError as e:
             raise HTTPException(status_code=401, detail=str(e))
         ctx = build_user_ctx(payload, raw_headers, body)
+        user_client = make_user_client(token)
     else:
         try:
             user_client, token = await _resolve_user_client(body.get("authorization") if isinstance(body, dict) else None)  # type: ignore
@@ -348,13 +367,8 @@ async def chat_webhook_stream(
     await rate_limiter.check(ctx["user_id"])
 
     rbac = build_rbac_block(ctx, body)
-    session = build_session(ctx, rbac)
+    session = await build_session(ctx, rbac, user_client)
     rls = build_rls_filter(rbac, ctx, body)
-
-    if authorization:
-        user_client = make_user_client(token)
-
-    await set_access_context(user_client, ctx, rbac, rls)
 
     chat_input = rls.get("chat_input") or ""
     if not chat_input:
@@ -367,6 +381,8 @@ async def chat_webhook_stream(
             system_prefix=rbac["system_prompt_prefix"],
             chat_input=chat_input,
             user_client=user_client,
+            user_id=ctx["user_id"],
+            tenant_id=session.get("tenant_id"),
         ):
             token_text = str(token)
             if token_text.startswith("data: "):
@@ -386,20 +402,34 @@ async def submit_feedback(
     """
     Record thumbs-up/down feedback on a chat response.
 
-    Uses the Supabase service-role REST client (the same pattern as every other
-    write in the app) so it works on Supabase free tier, which blocks direct
-    Postgres connections. The caller must hold a valid JWT; ``user_id`` is taken
-    from the verified token, never from the request body.
+    Written through the caller's own PostgREST client so the
+    ``query_feedback_insert_own`` RLS policy applies (no service-role key).
+    ``user_id`` is taken from the verified token, never from the request body.
+    The referenced session must belong to the caller (checked against
+    chat_sessions via RLS); otherwise the request is a 404.
     """
     token = _token_from_header(authorization)
     ctx, _ = _ctx_rbac_from_token(token)
+    user_client = make_user_client(token)
 
-    client = make_service_client()
+    owned_res = (
+        user_client.table("chat_sessions")
+        .select("session_id")
+        .eq("session_id", body.session_id)
+        .eq("user_id_uuid", ctx["user_id"])
+        .limit(1)
+        .execute()
+    )
+    owned_data = getattr(owned_res, "data", None) or owned_res
+    if not (isinstance(owned_data, list) and owned_data):
+        raise HTTPException(status_code=404, detail="NOT_FOUND: session does not belong to this user")
+
     res = (
-        client.table("query_feedback")
+        user_client.table("query_feedback")
         .insert({
             "session_id": body.session_id,
             "user_id": ctx["user_id"],
+            "user_id_uuid": ctx["user_id"],
             "query": body.query,
             "answer_excerpt": body.answer_excerpt,
             "rating": body.rating,
@@ -423,13 +453,63 @@ async def upload_document(
     access_level: int = 1,
     authorization: str | None = Header(default=None),
 ) -> JSONResponse:
+    """
+    Upload one document, classified server-side.
+
+    SECURITY: the client-supplied ``access_level`` is a HINT only and is NEVER
+    used as an authorization fact (it is recorded in the audit trail). The
+    effective level is computed from the caller's DB profile (user_profiles),
+    their matter grants (matter_access) and a deterministic sensitivity floor
+    over the extracted text, via ``authz.policy.classify_upload``. The
+    requested matter must pass the ``auth_can_administer_matter_ref`` RPC
+    (firm-wide callers may write into the firm pool). The write itself goes
+    through the normal document-ingest write path.
+    """
     token = _token_from_header(authorization)
-    ctx, rbac = _ctx_rbac_from_token(token)
-    if _rbac_level(ctx, rbac) < 3:
-        raise HTTPException(status_code=403, detail="Insufficient permissions to upload")
+    ctx, _ = _ctx_rbac_from_token(token)
+    user_client = make_user_client(token)
+
+    profile = authz_service.load_profile(user_client, ctx["user_id"])
+    if profile is None:
+        raise HTTPException(status_code=403, detail="FORBIDDEN: no user profile found")
+    grants = authz_service.load_grants(user_client, ctx["user_id"])
+
+    requested_matter = (matter_id or "").strip()
+    administered = True
+    if requested_matter:
+        administered = authz_service.can_administer_matter_ref(user_client, requested_matter)
+        if not administered:
+            raise HTTPException(status_code=403, detail=f"FORBIDDEN: cannot administer matter {requested_matter!r}")
+
+    contents = await file.read()
+    try:
+        from ingest.extract import extract_text
+
+        text, _ = extract_text(contents, file.content_type or "application/octet-stream")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("classification text extraction failed: %s", exc)
+        text = ""
+
+    try:
+        decision = classify_upload(
+            profile,
+            grants,
+            text,
+            requested_access_level=int(access_level or 1),
+            requested_matter_id=requested_matter,
+            administered=administered,
+        )
+    except AccessDenied as exc:
+        raise HTTPException(status_code=403, detail=exc.message) from exc
+
+    audit_events.log_classification(
+        actor=ctx["user_id"],
+        matter_id=decision.matter_id,
+        access_level=decision.access_level,
+        decision=decision.model_dump(),
+    )
 
     suffix = os.path.splitext(file.filename or "")[1]
-    contents = await file.read()
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
         tmp.write(contents)
         tmp_path = tmp.name
@@ -445,10 +525,18 @@ async def upload_document(
             file_url="",
             mime_type=file.content_type or "application/octet-stream",
             raw_bytes=contents,
-            access_level=access_level,
-            matter_id=matter_id,
+            access_level=decision.access_level,
+            matter_id=decision.matter_id,
         )
-        return JSONResponse({"status": "ok", "chunks": result.get("chunks", 0), "file_id": file_id})
+        return JSONResponse({
+            "status": "ok",
+            "chunks": result.get("chunks", 0),
+            "file_id": file_id,
+            "access_level": decision.access_level,
+            "matter_id": decision.matter_id,
+            "sensitivity_floor": decision.sensitivity_floor,
+            "classifier": decision.classifier,
+        })
     finally:
         os.unlink(tmp_path)
 
@@ -494,18 +582,16 @@ async def list_sessions(
 ) -> JSONResponse:
     token = _token_from_header(authorization)
     ctx, _rbac = _ctx_rbac_from_token(token)
-    sessions = await list_user_sessions(ctx["user_id"])
+    user_client = make_user_client(token)
+    sessions = await list_user_sessions(user_client, ctx["user_id"])
     return JSONResponse({"sessions": sessions})
 
 
 @app.get("/admin/users")
 async def admin_list_users(authorization: str | None = Header(default=None)) -> JSONResponse:
-    token = _token_from_header(authorization)
-    ctx, rbac = _ctx_rbac_from_token(token)
-    if _rbac_level(ctx, rbac) < 5:
-        raise HTTPException(status_code=403, detail="Admin only")
+    _ctx, _user_client = _assert_admin(authorization)
 
-    svc = make_service_client()
+    svc = authz_service.admin_client()
     users = svc.auth.admin.list_users()
     return JSONResponse({
         "users": [
@@ -525,17 +611,14 @@ async def admin_create_user(
     request: Request,
     authorization: str | None = Header(default=None),
 ) -> JSONResponse:
-    token = _token_from_header(authorization)
-    ctx, rbac = _ctx_rbac_from_token(token)
-    if _rbac_level(ctx, rbac) < 5:
-        raise HTTPException(status_code=403, detail="Admin only")
+    _ctx, _user_client = _assert_admin(authorization)
 
     body = await request.json()
     email = body.get("email", "")
     password = body.get("password", "")
     access_level = int(body.get("access_level", 1))
 
-    svc = make_service_client()
+    svc = authz_service.admin_client()
     user = svc.auth.admin.create_user({
         "email": email,
         "password": password,
@@ -565,14 +648,16 @@ async def ingest_drive_folder(
     """
     Re-ingest the entire configured Drive folder.
 
-    SECURITY: ``access_level`` and ``matter_id`` are derived from the
-    requesting user. ``access_level`` is the caller's RBAC level (max sensitivity
-    they can READ), which is the correct ceiling for documents they can also
-    WRITE. ``matter_id`` is taken from the request body when supplied, otherwise
-    the caller's first matter_id — so matter-scoped users stamp documents into
-    their own matter, not into the firm's open pool.
+    SECURITY: ``access_level`` and ``matter_id`` are classified SERVER-SIDE.
+    The caller's DB profile (user_profiles), matter grants (matter_access) and
+    the ``auth_can_administer_matter_ref`` RPC are the only authorization facts;
+    the client body and any Drive custom properties are hints only and are never
+    trusted. Each file's text is classified with the same deterministic
+    sensitivity floor used by ``/documents/upload`` (no weaker than uploads).
     """
     ctx, rbac = _require_ingest(authorization)
+    user_client = make_user_client(_token_from_header(authorization))
+
     try:
         json_body = await request.json()
     except Exception:
@@ -580,12 +665,27 @@ async def ingest_drive_folder(
     if not isinstance(json_body, dict):
         json_body = {}
 
+    profile = authz_service.load_profile(user_client, ctx["user_id"])
+    if profile is None:
+        raise HTTPException(status_code=403, detail="FORBIDDEN: no user profile found")
+    grants = authz_service.load_grants(user_client, ctx["user_id"])
+
+    requested_matter = (json_body.get("matter_id") or "").strip() or await _pick_user_matter(user_client, ctx)
+    requested_access_level = int(json_body.get("access_level") or (rbac.get("perms") or {}).get("level") or 1)
+
+    administered = _require_matter_authority(user_client, profile, requested_matter)
+
     from ingest.downloader import DriveAuthError, ingest_folder
 
-    matter_id = json_body.get("matter_id") or _pick_user_matter(ctx)
-    access_level = int((rbac.get("perms") or {}).get("level") or 1)
+    classify = _make_ingest_classifier(
+        user_client, ctx, profile, grants, requested_matter, requested_access_level, administered
+    )
     try:
-        return await ingest_folder(access_level=access_level, matter_id=matter_id)
+        return await ingest_folder(
+            access_level=requested_access_level,
+            matter_id=requested_matter,
+            classify=classify,
+        )
     except DriveAuthError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
@@ -596,50 +696,171 @@ async def ingest_drive_file(
     authorization: str | None = Header(default=None),
 ) -> dict[str, Any]:
     """
-    Ingest a single Drive file.
+    Ingest a single Drive file, classified server-side.
 
-    SECURITY: ``access_level`` is derived from the caller's RBAC level.
-    ``matter_id`` comes from the body when supplied, otherwise the caller's
-    first matter_id.
+    SECURITY: the effective ``access_level``/``matter_id`` come from the
+    caller's DB profile/grants and the deterministic sensitivity floor over the
+    file's extracted text (``authz.policy.classify_upload``), never from the
+    client or from Drive custom properties. The requested matter must be
+    administered by the caller (``auth_can_administer_matter_ref``).
     """
     ctx, rbac = _require_ingest(authorization)
+    user_client = make_user_client(_token_from_header(authorization))
+
+    profile = authz_service.load_profile(user_client, ctx["user_id"])
+    if profile is None:
+        raise HTTPException(status_code=403, detail="FORBIDDEN: no user profile found")
+    grants = authz_service.load_grants(user_client, ctx["user_id"])
+
+    requested_matter = (body.matter_id or "").strip() or await _pick_user_matter(user_client, ctx)
+    requested_access_level = int((rbac.get("perms") or {}).get("level") or 1)
+
+    administered = _require_matter_authority(user_client, profile, requested_matter)
+
     from ingest.downloader import DriveAuthError
     from ingest.drive_webhook import handle_drive_event
 
-    matter_id = body.matter_id or _pick_user_matter(ctx)
-    access_level = int((rbac.get("perms") or {}).get("level") or 1)
+    classify = _make_ingest_classifier(
+        user_client, ctx, profile, grants, requested_matter, requested_access_level, administered
+    )
     try:
         return await handle_drive_event(
             file_id=body.file_id,
             event="manual",
-            access_level=access_level,
-            matter_id=matter_id,
+            access_level=requested_access_level,
+            matter_id=requested_matter,
+            classify=classify,
         )
     except DriveAuthError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
-def _pick_user_matter(ctx: dict[str, Any]) -> str:
-    """Return the caller's first matter_id, or '' if they have ``view_all``."""
-    matters = ctx.get("matter_ids") or []
-    if not matters:
-        return ""
-    return str(matters[0])
+def _require_matter_authority(user_client: Any, profile: Any, requested_matter: str) -> bool | None:
+    """Validate the ingest target against authoritative facts only.
+
+    Returns the authoritative administered verdict for the requested matter
+    (True when the RPC confirms it, None for the firm pool) so callers can
+    thread it into ``classify_upload``.
+    """
+    if requested_matter:
+        administered = authz_service.can_administer_matter_ref(user_client, requested_matter)
+        if not administered:
+            raise HTTPException(status_code=403, detail=f"FORBIDDEN: cannot administer matter {requested_matter!r}")
+        return True
+    if not profile.firm_wide:
+        raise HTTPException(status_code=403, detail="FORBIDDEN: only firm-wide administrators may ingest into the firm pool")
+    return None
+
+
+def _make_ingest_classifier(
+    user_client: Any,
+    ctx: dict[str, Any],
+    profile: Any,
+    grants: list[Any],
+    requested_matter: str,
+    requested_access_level: int,
+    administered: bool | None,
+):
+    """Build a per-file server-side classifier ``text -> (access_level, matter_id)``.
+
+    Uses the same ``authz.policy.classify_upload`` rules as uploads, so bulk
+    ingest is never weaker than single-file upload. Each classification is
+    recorded in the audit trail.
+    """
+    def classify(text: str) -> tuple[int, str]:
+        decision = classify_upload(
+            profile,
+            grants,
+            text,
+            requested_access_level=requested_access_level,
+            requested_matter_id=requested_matter,
+            administered=administered,
+        )
+        audit_events.log_classification(
+            actor=ctx["user_id"],
+            matter_id=decision.matter_id,
+            access_level=decision.access_level,
+            decision=decision.model_dump(),
+        )
+        return decision.access_level, decision.matter_id
+
+    return classify
+
+
+async def _pick_user_matter(user_client: Any, ctx: dict[str, Any]) -> str:
+    """Grant-aware default matter for ingest.
+
+    Candidate refs come from the JWT claims (hints only); each is validated
+    against the authoritative ``auth_can_administer_matter_ref`` RPC so only
+    refs the caller actually administers are returned.
+    """
+    candidates = ctx.get("matter_ids") or []
+    for ref in candidates:
+        ref = str(ref).strip()
+        if ref and authz_service.can_administer_matter_ref(user_client, ref):
+            return ref
+    return ""
+
+
+def _request_user_info(request: Request) -> dict[str, str | None]:
+    """Best-effort identity for audit logging from the Authorization header."""
+    authorization = request.headers.get("authorization") or ""
+    token = authorization.replace("Bearer ", "").replace("bearer ", "").strip()
+    user_id: str | None = None
+    email: str | None = None
+    if token:
+        try:
+            payload = _payload_from_token(token)
+            user_id = payload.get("sub")
+            email = payload.get("email")
+        except Exception:  # noqa: BLE001
+            pass
+    ip = (
+        request.headers.get("x-forwarded-for")
+        or request.headers.get("x-real-ip")
+        or "unknown"
+    ).split(",")[0].strip()
+    return {"user_id": user_id, "actor_email": email, "ip_address": ip}
 
 
 @app.options("/{path:path}")
 async def preflight(path: str) -> Response:
-    headers = {
-        "Access-Control-Allow-Origin": "*",
+    allowed_origin = (
+        settings.cors_allow_origins[0]
+        if settings.cors_allow_origins and settings.cors_allow_origins[0] != "*"
+        else ""
+    )
+    headers: dict[str, str] = {
         "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
         "Access-Control-Allow-Headers": "Authorization, Content-Type",
     }
+    if allowed_origin:
+        headers["Access-Control-Allow-Origin"] = allowed_origin
     return Response(status_code=204, headers=headers)
 
 
 @app.exception_handler(HTTPException)
-async def http_exc(_request: Request, exc: HTTPException) -> JSONResponse:
-    response_headers = {**(getattr(exc, "headers", {}) or {}), "Access-Control-Allow-Origin": "*"}
+async def http_exc(request: Request, exc: HTTPException) -> JSONResponse:
+    # Audit log denied / rate-limited requests (best-effort; never breaks the
+    # response). Denied auth or authorization -> access_denied; rate limit -> rate_limit.
+    if exc.status_code == 429:
+        info = _request_user_info(request)
+        audit_events.log_rate_limit(user_id=info["user_id"], ip_address=info["ip_address"])
+    elif exc.status_code in (401, 403):
+        info = _request_user_info(request)
+        audit_events.log_denial(
+            action=request.url.path,
+            reason=str(exc.detail),
+            user_id=info["user_id"],
+            actor_email=info["actor_email"],
+            ip_address=info["ip_address"],
+        )
+
+    response_headers = {**(getattr(exc, "headers", {}) or {})}
+    if exc.status_code in (401, 403, 429):
+        response_headers["Access-Control-Allow-Origin"] = (
+            settings.cors_allow_origins[0] if settings.cors_allow_origins else ""
+        )
     return JSONResponse(
         status_code=exc.status_code,
         content={"error": exc.detail},

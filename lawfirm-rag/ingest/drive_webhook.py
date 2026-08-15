@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hmac
 import logging
-from typing import Any
+from typing import Any, Callable
 
 from fastapi import HTTPException
 
@@ -32,6 +32,7 @@ async def handle_drive_event(
     access_level: int | None = None,
     matter_id: str | None = None,
     request_headers: dict | None = None,
+    classify: Callable[[str], tuple[int, str]] | None = None,
 ) -> dict[str, Any]:
     """
     Handle a single Google Drive push notification.
@@ -46,6 +47,11 @@ async def handle_drive_event(
     is visible. Long-term, the proper fix is per-folder/drive metadata
     (handled in the Item 5 upgrade) — re-classify anything ingested via this
     fallback path.
+
+    ``classify`` (optional) is a server-side classifier ``text -> (access_level,
+    matter_id)``. When provided it REPLACES the Drive custom-properties path so
+    client-supplied properties are never treated as authorization facts. When
+    None (the unauthenticated worker path), legacy behaviour is preserved.
     """
     if request_headers is not None:
         verify_drive_webhook(request_headers, settings)
@@ -90,13 +96,19 @@ async def handle_drive_event(
 
     raw = download_file(file_id, file_meta["mimeType"])
 
-    # Prefer per-file Drive properties when present; fall back to provided args
-    props = file_meta.get("properties") or {}
-    try:
-        file_access_level = int(props.get("access_level", access_level or settings.default_ingest_access_level))
-    except Exception:
-        file_access_level = int(access_level or settings.default_ingest_access_level)
-    file_matter_id = props.get("matter_id", matter_id or settings.default_ingest_matter_id)
+    if classify is not None:
+        from ingest.extract import extract_text
+
+        text, _ = extract_text(raw, file_meta["mimeType"])
+        file_access_level, file_matter_id = classify(text)
+    else:
+        # Prefer per-file Drive properties when present; fall back to provided args
+        props = file_meta.get("properties") or {}
+        try:
+            file_access_level = int(props.get("access_level", access_level or settings.default_ingest_access_level))
+        except Exception:
+            file_access_level = int(access_level or settings.default_ingest_access_level)
+        file_matter_id = props.get("matter_id", matter_id or settings.default_ingest_matter_id)
 
     result = await upsert_file(
         file_id=file_id,

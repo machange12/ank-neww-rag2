@@ -1,4 +1,11 @@
 -- ============================================================
+-- DEPRECATED — see sql/DEPRECATED.md and supabase/migrations/.
+-- This file is retained for reference only and MUST NOT be applied.
+-- The authoritative schema is the versioned migration set under
+-- supabase/migrations/ (apply via scripts/apply_migrations.py).
+-- ============================================================
+
+-- ============================================================
 -- newFirmRAG â€” database schema
 -- Run once in the Supabase SQL Editor.
 -- ============================================================
