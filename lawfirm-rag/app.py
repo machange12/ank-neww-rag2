@@ -3,10 +3,11 @@ from __future__ import annotations
 import logging
 import os
 import tempfile
+import uuid
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, File, Header, HTTPException, Request, Response, UploadFile
+from fastapi import FastAPI, File, Form, Header, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -121,6 +122,32 @@ class DriveFileIngestBody(BaseModel):
     matter_id: str | None = None
 
 
+def _resolve_profile_role_level(client: Any, user_id: str | None) -> tuple[str | None, int]:
+    """Resolve role/access_level from public.user_profiles (DB source of truth).
+
+    Runs on the client that just signed in, so RLS returns the user's own row.
+    On any failure or missing row, fall back to role=None, access_level=1.
+    """
+    if not user_id:
+        return None, 1
+    try:
+        res = (
+            client.table("user_profiles")
+            .select("role, access_level")
+            .eq("user_id", user_id)
+            .limit(1)
+            .execute()
+        )
+        data = getattr(res, "data", None) or res
+        rows = data if isinstance(data, list) else []
+        if rows:
+            row = rows[0]
+            return row.get("role"), int(row.get("access_level") or 1)
+    except Exception:  # noqa: BLE001
+        pass
+    return None, 1
+
+
 @app.post("/auth/login", response_model=LoginResponse)
 async def login(body: LoginBody) -> LoginResponse:
     try:
@@ -128,8 +155,8 @@ async def login(body: LoginBody) -> LoginResponse:
         res = client.auth.sign_in_with_password({"email": body.email, "password": body.password})
         sess = res.session if hasattr(res, "session") else res
         user = res.user if hasattr(res, "user") else None
-        user_metadata = (getattr(user, "user_metadata", {}) or {}) if user else {}
-        app_metadata = (getattr(user, "app_metadata", {}) or {}) if user else {}
+        user_id = getattr(user, "id", None) if user else None
+        role, access_level = _resolve_profile_role_level(client, user_id)
         access = getattr(sess, "access_token", "") or ""
         refresh = getattr(sess, "refresh_token", "") or ""
         return LoginResponse(
@@ -137,14 +164,9 @@ async def login(body: LoginBody) -> LoginResponse:
             refresh_token=refresh,
             expires_in=getattr(sess, "expires_in", None),
             token_type=getattr(sess, "token_type", None),
-            user_id=getattr(user, "id", None) if user else None,
-            role=app_metadata.get("role") if user else None,
-            access_level=int(
-                user_metadata.get("access_level")
-                or app_metadata.get("access_level")
-                or (ROLE_MATRIX.get(app_metadata.get("role") or "", {}) or {}).get("level")
-                or 1
-            ),
+            user_id=user_id,
+            role=role,
+            access_level=access_level,
         )
     except Exception as exc:
         message = str(exc).strip()
@@ -446,11 +468,79 @@ async def submit_feedback(
     return JSONResponse({"status": "ok", "id": inserted_id}, status_code=201)
 
 
+def _resolve_matter_ref(user_client: Any, requested_matter: str) -> str:
+    """Resolve a matter UUID to its matter_ref for the ref-based admin RPC.
+
+    ``requested_matter`` may be a matter UUID (from public.matters.id) or an
+    already-resolved matter_ref string (e.g. "M-2024-118"). UUIDs are looked
+    up in public.matters via the caller's client so RLS applies. Non-UUID
+    values (matter_ref strings) are returned unchanged. A UUID that cannot be
+    resolved fails closed and is returned as-is (the admin RPC will then
+    return false and block the upload).
+    """
+    candidate = (requested_matter or "").strip()
+    if not candidate:
+        return ""
+    try:
+        uuid.UUID(candidate)
+    except (ValueError, AttributeError, TypeError):
+        return candidate
+    try:
+        res = (
+            user_client.table("matters")
+            .select("matter_ref")
+            .eq("id", candidate)
+            .limit(1)
+            .execute()
+        )
+        data = getattr(res, "data", None) or res
+        rows = data if isinstance(data, list) else []
+        if rows and rows[0].get("matter_ref"):
+            return rows[0]["matter_ref"]
+        logger.warning("matter UUID %r did not resolve to a matter_ref", candidate)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("matter_ref lookup failed for uuid=%r: %s", candidate, exc)
+    return candidate
+
+
+def _matter_uuid_for(user_client: Any, requested_matter: str) -> str | None:
+    """Resolve a matter ref/UUID to the matter's UUID (public.matters.id).
+
+    UUIDs are returned as-is; matter_ref strings (e.g. "M-2024-118") are
+    looked up via the caller's client so RLS applies. Returns None when the
+    value is empty or cannot be resolved.
+    """
+    candidate = (requested_matter or "").strip()
+    if not candidate:
+        return None
+    try:
+        uuid.UUID(candidate)
+        return candidate
+    except (ValueError, AttributeError, TypeError):
+        pass
+    try:
+        res = (
+            user_client.table("matters")
+            .select("id")
+            .eq("matter_ref", candidate)
+            .limit(1)
+            .execute()
+        )
+        data = getattr(res, "data", None) or res
+        rows = data if isinstance(data, list) else []
+        if rows and rows[0].get("id"):
+            return rows[0]["id"]
+        logger.warning("matter_ref %r did not resolve to a matter UUID", candidate)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("matter UUID lookup failed for ref=%r: %s", candidate, exc)
+    return None
+
+
 @app.post("/documents/upload")
 async def upload_document(
     file: UploadFile = File(...),
-    matter_id: str = "",
-    access_level: int = 1,
+    matter_id: str = Form(""),
+    access_level: int = Form(1),
     authorization: str | None = Header(default=None),
 ) -> JSONResponse:
     """
@@ -461,9 +551,14 @@ async def upload_document(
     effective level is computed from the caller's DB profile (user_profiles),
     their matter grants (matter_access) and a deterministic sensitivity floor
     over the extracted text, via ``authz.policy.classify_upload``. The
-    requested matter must pass the ``auth_can_administer_matter_ref`` RPC
+    requested matter must be one the caller holds a matter_access grant for
+    (unless firm_wide) and must pass the ``auth_can_administer_matter_ref`` RPC
     (firm-wide callers may write into the firm pool). The write itself goes
     through the normal document-ingest write path.
+
+    The ``matter_id`` form field may be a matter UUID or a matter_ref string
+    (e.g. "M-2024-118"); UUIDs are resolved to their matter_ref (public.matters,
+    via the caller's client) before the ref-based admin RPC is called.
     """
     token = _token_from_header(authorization)
     ctx, _ = _ctx_rbac_from_token(token)
@@ -477,7 +572,34 @@ async def upload_document(
     requested_matter = (matter_id or "").strip()
     administered = True
     if requested_matter:
-        administered = authz_service.can_administer_matter_ref(user_client, requested_matter)
+        if not profile.firm_wide:
+            # The caller must hold SOME grant for the requested matter
+            # (matter_access row matching the matter UUID). The administer
+            # RPC below is narrower (can_administer); this guard ensures the
+            # user is not ingesting into a matter they have no relationship
+            # with at all.
+            matter_uuid = _matter_uuid_for(user_client, requested_matter)
+            has_matter_grant = bool(matter_uuid) and any(
+                g.matter_id == matter_uuid for g in grants
+            )
+            logger.info(
+                "upload matter grant check: requested_matter=%r matter_uuid=%r has_grant=%s",
+                requested_matter,
+                matter_uuid,
+                has_matter_grant,
+            )
+            if not has_matter_grant:
+                raise HTTPException(
+                    status_code=403, detail="FORBIDDEN: no matter grant authorizing ingest"
+                )
+        matter_ref = _resolve_matter_ref(user_client, requested_matter)
+        logger.info(
+            "upload matter auth: requested_matter=%r resolved_matter_ref=%r", requested_matter, matter_ref
+        )
+        administered = authz_service.can_administer_matter_ref(user_client, matter_ref)
+        logger.info(
+            "upload matter auth: can_administer_matter_ref(%r) -> %s", matter_ref, administered
+        )
         if not administered:
             raise HTTPException(status_code=403, detail=f"FORBIDDEN: cannot administer matter {requested_matter!r}")
 
