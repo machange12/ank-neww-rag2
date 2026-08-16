@@ -1,0 +1,15 @@
+[
+  {
+    "query": "What are the notice requirements under Kenya's DPA for a personal data breach?",
+    "expected_file_ids": ["REPLACE_WITH_A_REAL_file_id_FROM_GET_/documents"],
+    "expected_keywords": ["notice", "72 hours"]
+  },
+  {
+    "query": "Summarise the key obligations in the employment privacy review matter.",
+    "expected_keywords": ["employment", "privacy"]
+  },
+  {
+    "query": "What is the capital of France?",
+    "expect_zero_result": true
+  }
+]

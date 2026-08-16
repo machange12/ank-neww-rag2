@@ -46,13 +46,34 @@ class Settings(BaseSettings):
     max_upload_bytes: int = 25 * 1024 * 1024
 
     embedding_model: str = "nomic-embed-text"
-    embedding_dim: int = 1536
+    # nomic-embed-text-v1.5's native/max output is 768-dim (Matryoshka —
+    # truncatable down, never up); the documents.embedding column and both
+    # embedder paths (local HF, OpenAI fallback) are all pinned to this value
+    # via providers.get_embeddings() so the two paths stay interchangeable.
+    # Previously this was 1536 and unused anywhere — the local embedder was
+    # silently producing 768-dim vectors against a vector(1536) column, which
+    # fails every insert. See supabase/migrations/20260727000007.
+    embedding_dim: int = 768
     chat_model: str = "llama-3.3-70b-versatile"
     chat_max_tokens: int = 4096
-    chunk_size: int = 750
-    chunk_overlap: int = 200
+    # Token-based (tiktoken cl100k_base), not character-based — see
+    # ingest/embed.py. nomic-embed-text-v1.5 supports an 8192-token context;
+    # the previous character-based 750/200 (~190/~50 tokens) used ~2% of
+    # that window and paid a CPU embedding pass per tiny chunk. 900/80 keeps
+    # overlap proportionate (~9%) instead of the previous 27%.
+    chunk_size: int = 900
+    chunk_overlap: int = 80
     retrieve_top_k: int = 20
     context_window: int = 10
+
+    # Optional LLM-boundary pre-pass before the recursive legal-aware
+    # splitter (ingest/agentic_chunk.py). Off by default: 2025-26 benchmarks
+    # show it beats tuned recursive splitting mainly on structured
+    # high-stakes text (which this corpus is), but costs an LLM call per
+    # document and needs a golden-set A/B eval on the real corpus before
+    # trusting it over the tuned recursive splitter. Always falls back to
+    # the recursive splitter on any failure — never blocks ingest.
+    use_agentic_chunking: bool = False
 
     # Per-user sliding-window rate limiting on chat endpoints
     rate_limit_rpm: int = 20
@@ -60,6 +81,13 @@ class Settings(BaseSettings):
 
     # Deployment environment. "production" rejects allow_origins=["*"].
     environment: str = "development"
+
+    # Root log level. Nothing in this codebase previously called
+    # logging.basicConfig()/dictConfig(), so every logger.info()/.debug() call
+    # (retrieval quality logs, ingest/scheduler logs, etc.) was silently
+    # dropped — only WARNING+ reached stderr, via Python's unformatted
+    # last-resort handler. See logging_setup.configure_logging().
+    log_level: str = "INFO"
 
     # CORS allow-list. In production a strict list is required and "*"
     # is rejected. For local development you may set

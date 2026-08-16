@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from ingest.classifier import classify_document, extract_legal_entities
-from ingest.embed import chunk_text, embed_chunks
+from ingest.embed import CHUNKING_VERSION, chunk_text_auto, embed_chunks, total_tokens
 from ingest.extract import extract_text
 from search.service_client import make_service_client
 
@@ -111,7 +111,12 @@ async def upsert_file(
         logger.warning("doc_intelligence failed file_id=%s: %s", file_id, exc)
         doc_intelligence = {}
 
-    chunks = chunk_text(text)
+    chunking_llm = None
+    if settings.use_agentic_chunking:
+        from providers import make_chat_llm
+
+        chunking_llm = make_chat_llm()
+    chunks, chunking_method = chunk_text_auto(text, llm=chunking_llm)
     if not chunks:
         logger.warning("No chunks produced for file_id=%s", file_id)
         return {"file_id": file_id, "chunks": 0}
@@ -144,6 +149,8 @@ async def upsert_file(
                 "section_heading": chunk.section_heading,
                 "chunk_index": chunk.chunk_index,
                 "total_chunks": total_chunks,
+                "chunking_version": CHUNKING_VERSION,
+                "chunking_method": chunking_method,
                 "page_number": chunk.chunk_index // chunks_per_page,
                 "doc_type": doc_intelligence.get("doc_type", "unknown"),
                 "jurisdiction": doc_intelligence.get("jurisdiction", "Unknown"),
@@ -181,5 +188,15 @@ async def upsert_file(
         "legal_entities": json.dumps(doc_intelligence),
     }, on_conflict="file_id").execute()
 
-    logger.info("Ingested file_id=%s chunks=%d", file_id, len(chunks))
+    token_count = total_tokens(chunks)
+    logger.info(
+        "Ingested file_id=%s chunks=%d total_tokens=%d avg_tokens_per_chunk=%.0f "
+        "chunking_version=%s chunking_method=%s",
+        file_id,
+        len(chunks),
+        token_count,
+        token_count / len(chunks),
+        CHUNKING_VERSION,
+        chunking_method,
+    )
     return {"file_id": file_id, "chunks": len(chunks)}

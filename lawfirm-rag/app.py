@@ -9,10 +9,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from audit import events as audit_events
 from config import settings
-from deps import request_user_info
-from routers import admin, auth, chat, documents
+from logging_setup import configure_logging
+
+configure_logging()  # must run before any router/module below logs anything
+
+from audit import events as audit_events  # noqa: E402
+from deps import request_user_info  # noqa: E402
+from routers import admin, auth, chat, documents  # noqa: E402
 
 logger = logging.getLogger(__name__)
 

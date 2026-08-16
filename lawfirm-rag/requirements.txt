@@ -20,6 +20,7 @@ langchain-postgres==0.0.17
 langchain-text-splitters==1.1.2
 langgraph==1.2.10
 groq==0.37.1
+tiktoken==0.13.0
 
 # Local embeddings (HuggingFace nomic) — required by langchain-huggingface.
 sentence-transformers==4.0.0

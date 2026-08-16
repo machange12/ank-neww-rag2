@@ -35,3 +35,10 @@ revoke all on function public.delete_documents_by_file_id_before(text, timestamp
   from public, authenticated, anon;
 grant execute on function public.delete_documents_by_file_id_before(text, timestamptz)
   to service_role;
+
+-- ------------------------------------------------------------
+-- Record migration version
+-- ------------------------------------------------------------
+insert into public.schema_migrations (version, description)
+values ('20260727000006', 'atomic re-ingest: delete_documents_by_file_id_before')
+on conflict (version) do nothing;

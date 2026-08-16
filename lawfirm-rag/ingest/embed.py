@@ -1,12 +1,32 @@
 from __future__ import annotations
 
 import re
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
+import tiktoken
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from config import settings
 from providers import get_embeddings
+
+# Bumped whenever the chunking strategy changes (splitter, length function,
+# size/overlap, separator set) in a way that changes chunk boundaries for
+# existing documents. Stored on every chunk's metadata (ingest/store.py) so
+# chunks from different chunking runs are distinguishable and a re-ingest can
+# be scoped/audited instead of guessed at. v1 was character-based
+# (RecursiveCharacterTextSplitter default len()); v2 switched to token-based
+# (tiktoken cl100k_base) with larger chunks and less overlap — see
+# config.py's chunk_size/chunk_overlap docstring for the reasoning.
+CHUNKING_VERSION = "legal-recursive-tiktoken-v2"
+
+_TOKENIZER = tiktoken.get_encoding("cl100k_base")
+
+
+def _token_length(text: str) -> int:
+    """Token count via tiktoken cl100k_base — a close proxy for the actual
+    embedding model's tokenizer and a much more meaningful unit than raw
+    character count against an 8192-token-context embedder."""
+    return len(_TOKENIZER.encode(text, disallowed_special=()))
 
 
 # Legal document separators ordered from largest structural unit to smallest.
@@ -88,7 +108,7 @@ def chunk_text(text: str) -> list[TextChunk]:
         chunk_size=settings.chunk_size,
         chunk_overlap=settings.chunk_overlap,
         separators=LEGAL_SEPARATORS,
-        length_function=len,
+        length_function=_token_length,
         is_separator_regex=True,
     )
 
@@ -110,6 +130,35 @@ def chunk_text(text: str) -> list[TextChunk]:
         ))
 
     return result
+
+
+def total_tokens(chunks: list[TextChunk]) -> int:
+    """Total tiktoken count across all chunks — for ingest-time logging so
+    chunk-count/token-count trends are visible per file, not just guessed at."""
+    return sum(_token_length(chunk.text) for chunk in chunks)
+
+
+def chunk_text_auto(text: str, llm: Any = None) -> tuple[list[TextChunk], str]:
+    """
+    Chunk ``text``, optionally trying the LLM-boundary pre-pass first.
+
+    When ``settings.use_agentic_chunking`` is on and ``llm`` is provided,
+    tries ``ingest.agentic_chunk.agentic_chunk_text`` first and falls back to
+    the recursive splitter on any failure (oversized doc, LLM error,
+    unparseable/non-verbatim response) — see agentic_chunk.py. Returns
+    ``(chunks, method)`` where ``method`` is ``"agentic"`` or ``"recursive"``
+    so callers can record which one actually produced these chunks.
+    """
+    if settings.use_agentic_chunking and llm is not None:
+        # Local import: agentic_chunk.py imports TextChunk from this module,
+        # so a module-level import here would be circular.
+        from ingest.agentic_chunk import agentic_chunk_text
+
+        agentic_result = agentic_chunk_text(text, llm)
+        if agentic_result is not None:
+            return agentic_result, "agentic"
+
+    return chunk_text(text), "recursive"
 
 
 def enrich_chunk(chunk: TextChunk, file_title: str, total_pages: int = 0) -> str:

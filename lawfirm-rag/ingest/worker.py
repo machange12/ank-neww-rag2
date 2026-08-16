@@ -7,10 +7,14 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 
-from cleanup.orphan_finder import run_cleanup
 from config import settings
-from ingest.downloader import DriveAuthError
-from ingest.drive_webhook import handle_drive_event, verify_drive_webhook
+from logging_setup import configure_logging
+
+configure_logging()  # must run before any module below logs anything
+
+from cleanup.orphan_finder import run_cleanup  # noqa: E402
+from ingest.downloader import DriveAuthError  # noqa: E402
+from ingest.drive_webhook import handle_drive_event, verify_drive_webhook  # noqa: E402
 
 logger = logging.getLogger(__name__)
 

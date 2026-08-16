@@ -129,6 +129,10 @@ class HybridRetriever(BaseRetriever):
     store: Any
     k: int | None = None
     doc_type_filter: str | None = None
+    # Which path served the most recent call: "hybrid" or "vector_fallback".
+    # A real Pydantic field (not a plain attribute) since BaseRetriever is a
+    # Pydantic model and rejects undeclared attributes.
+    last_path: str = ""
 
     class Config:
         arbitrary_types_allowed = True
@@ -145,19 +149,38 @@ class HybridRetriever(BaseRetriever):
         except Exception:
             docs = []
         if docs:
+            self.last_path = "hybrid"
             return docs
         # Fallback to vector similarity. When a doc_type filter is set, pass it
         # as a metadata filter so only that document type is matched.
+        # hybrid_search() already logs a warning on outright RPC failure; this
+        # covers the equally-relevant "RPC succeeded but returned zero rows"
+        # case, which was previously invisible — no log at all.
+        logger.warning(
+            "hybrid retrieval returned no rows, falling back to vector-only "
+            "similarity search | query=%r top_k=%d doc_type_filter=%r",
+            query,
+            top_k,
+            self.doc_type_filter,
+        )
+        self.last_path = "vector_fallback"
         filter_kwargs = {"filter": {"doc_type": self.doc_type_filter}} if self.doc_type_filter else {}
         return self.store.similarity_search(query, k=top_k, **filter_kwargs)
 
 
-def _make_retriever(user_client: Any, llm: Any, k: int | None = None, doc_type_filter: str | None = None) -> Any:
+def _make_retriever(
+    user_client: Any, llm: Any, k: int | None = None, doc_type_filter: str | None = None
+) -> tuple[Any, "HybridRetriever"]:
     """Build the retrieval chain; ``k`` overrides settings.retrieve_top_k for this call.
 
     ``doc_type_filter`` (optional) restricts retrieval to a single document type
     (e.g. "judgment", "contract", "statute"). Passing None preserves the existing
     unfiltered behaviour.
+
+    Returns ``(retriever, hybrid_retriever)`` — the inner ``HybridRetriever`` is
+    exposed alongside the (possibly multi-query/reranked-wrapped) outer
+    retriever so callers can read ``hybrid_retriever.last_path`` after
+    invocation for retrieval-quality logging (was previously untracked).
     """
     if k is None:
         k = settings.retrieve_top_k
@@ -189,9 +212,9 @@ def _make_retriever(user_client: Any, llm: Any, k: int | None = None, doc_type_f
         return ContextualCompressionRetriever(
             base_compressor=compressor,
             base_retriever=multi_retriever,
-        )
+        ), hybrid_retriever
 
-    return multi_retriever
+    return multi_retriever, hybrid_retriever
 
 
 def _build_context_string(docs: list[Any]) -> str:
@@ -238,8 +261,18 @@ def _log_retrieval(
     query: str,
     docs: list[Any],
     reranked: bool = False,
+    intent: dict[str, Any] | None = None,
+    path: str = "",
 ) -> None:
-    """Log retrieval quality info for each query."""
+    """Log retrieval quality info for each query.
+
+    One structured line per query carrying every retrieval-quality signal
+    that already existed in the code but was previously either not logged at
+    all (intent classification, hybrid-vs-vector-fallback path) or logged at
+    a level nothing captured (see logging_setup.configure_logging) — makes it
+    possible to grep/alert on zero-result rate, fallback rate, and intent
+    distribution instead of guessing at retrieval quality.
+    """
     top_chunks = []
     for doc in docs[:5]:
         meta = getattr(doc, "metadata", {}) or {}
@@ -249,10 +282,16 @@ def _log_retrieval(
             "section": meta.get("section_heading", ""),
         })
     logger.info(
-        "retrieval | session=%s | query=%r | docs_retrieved=%d | cohere_reranked=%s | top_chunks=%s",
+        "retrieval | session=%s | query=%r | intent=%s | retrieve_k=%s | doc_type_hint=%s "
+        "| path=%s | docs_retrieved=%d | zero_result=%s | cohere_reranked=%s | top_chunks=%s",
         session_id,
         query,
+        (intent or {}).get("intent", ""),
+        (intent or {}).get("retrieve_k", ""),
+        (intent or {}).get("doc_type_hint", ""),
+        path or "unknown",
         len(docs),
+        len(docs) == 0,
         reranked,
         json.dumps(top_chunks),
     )
@@ -285,7 +324,7 @@ async def run_chat(
         logger.info("out_of_scope query | session=%s | query=%r", session_id, chat_input)
         return {"answer": OUT_OF_SCOPE_RESPONSE, "sources": []}
 
-    retriever = _make_retriever(
+    retriever, hybrid_retriever = _make_retriever(
         user_client, llm, k=intent["retrieve_k"], doc_type_filter=intent.get("doc_type_hint")
     )
     docs: list[Any] = []
@@ -297,9 +336,14 @@ async def run_chat(
                 query=chat_input,
                 docs=docs,
                 reranked=bool(settings.cohere_api_key),
+                intent=intent,
+                path=hybrid_retriever.last_path,
             )
     except Exception as exc:
-        logger.debug("retrieval failed: %s", exc)
+        # A retrieval-pipeline failure leads straight into the hallucination
+        # guard below (silent "no answer"), so this must be visible, not
+        # debug-level (which nothing captured before configure_logging()).
+        logger.warning("retrieval failed | session=%s | query=%r | %s", session_id, chat_input, exc, exc_info=True)
 
     # Hallucination guard: never call the LLM when nothing was retrieved.
     if not docs:
@@ -380,7 +424,7 @@ async def stream_chat(
         yield f"data: {json.dumps({'type': 'sources', 'sources': []})}\n\n"
         return
 
-    retriever = _make_retriever(
+    retriever, hybrid_retriever = _make_retriever(
         user_client, llm, k=intent["retrieve_k"], doc_type_filter=intent.get("doc_type_hint")
     )
     docs: list[Any] = []
@@ -394,10 +438,12 @@ async def stream_chat(
                 query=chat_input,
                 docs=docs,
                 reranked=bool(settings.cohere_api_key),
+                intent=intent,
+                path=hybrid_retriever.last_path,
             )
             sources = _sources_from_docs(docs)[:5]
     except Exception as exc:
-        logger.debug("streaming retrieval failed: %s", exc)
+        logger.warning("streaming retrieval failed | session=%s | query=%r | %s", session_id, chat_input, exc, exc_info=True)
 
     # Hallucination guard: never call the LLM when nothing was retrieved.
     if not docs:

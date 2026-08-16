@@ -18,6 +18,14 @@ def get_embeddings() -> Any:
     Loading the local HuggingFace model (nomic-embed-text-v1.5) is expensive on
     CPU, so it is created once and reused across all requests. Returns the OpenAI
     embedder when OPENAI_API_KEY is set (backward compatible).
+
+    Both paths are pinned to ``settings.embedding_dim`` so the two providers
+    are interchangeable against the same ``documents.embedding vector(N)``
+    column. Previously neither path set this explicitly: the local model's
+    native output (768-dim) didn't match the DB column (vector(1536)), so
+    every insert failed. OpenAI's text-embedding-3 models support the same
+    ``dimensions`` truncation, so switching providers no longer requires a
+    schema change.
     """
     global _embeddings
     if _embeddings is not None:
@@ -29,14 +37,18 @@ def get_embeddings() -> Any:
         model = settings.embedding_model
         if model == "nomic-embed-text":
             model = OPENAI_EMBEDDING_MODEL
-        _embeddings = OpenAIEmbeddings(model=model, openai_api_key=settings.openai_api_key)
+        _embeddings = OpenAIEmbeddings(
+            model=model,
+            openai_api_key=settings.openai_api_key,
+            dimensions=settings.embedding_dim,
+        )
         return _embeddings
 
     from langchain_huggingface import HuggingFaceEmbeddings
 
     _embeddings = HuggingFaceEmbeddings(
         model_name=HUGGINGFACE_EMBEDDING_MODEL,
-        model_kwargs={"trust_remote_code": True},
+        model_kwargs={"trust_remote_code": True, "truncate_dim": settings.embedding_dim},
     )
     return _embeddings
 

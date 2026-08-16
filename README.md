@@ -89,9 +89,10 @@ and the legal-evidence/citation tooling is typed, deterministic and conservative
 
 ### Ops & tooling
 
-- Versioned SQL migrations (`supabase/migrations/` `0000`–`0006`), single source of truth; legacy `sql/*` frozen as deprecated reference.
+- Versioned SQL migrations (`supabase/migrations/` `0000`–`0007`), single source of truth; legacy `sql/*` frozen as deprecated reference.
 - Offline pytest suite (64 tests) covering authz policy, upload acceptance, citations, legal evidence, schema manifest, service-role isolation, session ownership.
 - Schema manifest verifier (`scripts/verify_schema.py`), migration runner (`scripts/apply_migrations.py`), chat/ingest smoke tests, OAuth token helper.
+- Retrieval-quality eval harness (`scripts/eval_retrieval.py`) — golden-set hit-rate / zero-result-rate against a running backend.
 - Streamlit test UI (`streamlit_app.py`) with login/chat/upload/admin tabs.
 
 ---
@@ -129,6 +130,36 @@ and the legal-evidence/citation tooling is typed, deterministic and conservative
 
 The following were identified as weaknesses and have since been resolved:
 
+- **Embedding/schema dimension mismatch — confirmed, was breaking every
+  ingest.** The default embedder path (local `nomic-embed-text-v1.5`, active
+  whenever `OPENAI_API_KEY` is unset) outputs 768-dim vectors — confirmed by
+  actually loading the model — against a `documents.embedding vector(1536)`
+  column. pgvector enforces exact dimension on insert, so every ingest via
+  the local embedder was failing. Fixed: both embedder paths are now pinned
+  to `settings.embedding_dim` (768) — the local model via `truncate_dim`, the
+  OpenAI fallback via `dimensions=` — so switching providers no longer
+  requires a schema change. Migration `20260727000007` (destructive: clears
+  `documents` and re-types the column; re-ingest required). Also fixed:
+  migrations `0006`/`0007` were missing their `schema_migrations` version
+  markers and weren't in `scripts/verify_schema.py`'s required-migrations
+  list, so the manifest check silently never verified them.
+- **Chunking was character-based against a token-context embedder.** 750
+  chars/200-char-overlap (`config.py`) was using ~2% of the local embedder's
+  8192-token context and paying a CPU embedding pass per tiny chunk, with a
+  27% overlap ratio. Switched to token-based chunking (tiktoken
+  `cl100k_base` as the splitter's length function) at 900 tokens / 80-token
+  overlap (~9%). Chunks now carry a `chunking_version` +
+  `chunking_method` tag in their metadata so re-ingests are traceable.
+  (`ingest/embed.py`)
+- **Optional agentic chunking (off by default).** Added
+  `ingest/agentic_chunk.py`: an LLM-boundary pre-pass gated by
+  `USE_AGENTIC_CHUNKING`, always falling back to the recursive splitter on
+  any failure (LLM error, unparseable response, a chunk that isn't verbatim
+  from the source, oversized document) — never blocks ingest. Not enabled
+  by default: per the 2025-26 benchmarks, it needs a golden-set A/B eval
+  against the real corpus (`scripts/eval_retrieval.py`) before trusting it
+  over the tuned recursive splitter, and that eval needs real documents this
+  repo doesn't have.
 - **Multi-turn chat.** `build_session()` now looks up a client-supplied
   `sessionId` and reuses it (bumping `last_activity_at`) when it names a
   session row the caller owns, instead of always minting a fresh UUID.
@@ -188,6 +219,28 @@ The following were identified as weaknesses and have since been resolved:
   `.gitignore` are gone; the 8 tracked log files (`uvicorn*.log`, `vite*.log`,
   `worker*.log`, `streamlit*.log`) have been untracked (kept on disk, no
   longer in git) and `.gitignore` now covers `*.log` generally.
+- **No logging was configured anywhere.** Neither `app.py` nor
+  `ingest/worker.py` ever called `logging.basicConfig`/`dictConfig`, so every
+  `logger.info()`/`.debug()` call in the codebase — including all retrieval-
+  quality logging — was silently dropped; only WARNING+ reached stderr, via
+  Python's unformatted `logging.lastResort` handler. Fixed with
+  `logging_setup.configure_logging()`, called first thing in both entrypoints
+  (`LOG_LEVEL` env var, default `INFO`).
+- **Retrieval quality was unobservable even once logging worked.** The
+  hybrid-search-RPC-fails and hybrid-returns-zero-rows fallback paths
+  (`search/hybrid.py`, `agents/rag_agent.py`'s `HybridRetriever`) logged
+  nothing at all or logged at debug; intent classification and which
+  retrieval path served a query were never logged. `_log_retrieval()` now
+  emits one structured line per query with intent, retrieve_k,
+  doc_type_hint, retrieval path (hybrid vs vector-fallback), doc count, and
+  an explicit `zero_result` flag — so fallback rate, zero-result rate, and
+  intent distribution are now greppable from logs instead of guessed at.
+- **No retrieval-quality eval harness.** Added
+  [`scripts/eval_retrieval.py`](lawfirm-rag/scripts/eval_retrieval.py): runs
+  a JSON golden set of (query, expected file_id/keywords) pairs against a
+  running backend and reports hit-rate / zero-result-rate — a black-box
+  check against the real chat response, not an internal probe. Template at
+  `lawfirm-rag/scripts/eval_retrieval.example.json`.
 
 ### Backend
 
@@ -234,7 +287,7 @@ FastAPI app (app.py)  +  ingest worker (ingest/worker.py)
    Supabase PostgREST        ingest/worker paths
         │                       │
         ▼                       ▼
-   Postgres + RLS + migrations 0000..0006
+   Postgres + RLS + migrations 0000..0007
         ├─ chat_sessions / chat_memory        (ownership RLS: user_id_uuid)
         ├─ user_profiles / matter_access      (authorization facts)
         ├─ documents / document_metadata      (retrieval, matter + level RLS)
@@ -335,10 +388,11 @@ applying and roll back by restoring the backup — see
 | `20260727000004_jwt_authorization_retrieval.sql` | `auth.uid()`-derived RLS + RPC predicates; JWT-claims auth; `set_access_context` deprecated |
 | `20260727000005_audit_security_events.sql` | `audit_security_events` append-only table + policies |
 | `20260727000006_atomic_reingest.sql` | `delete_documents_by_file_id_before` — lets re-ingest insert new chunks before deleting stale ones, instead of the reverse |
+| `20260727000007_embedding_dimension_768.sql` | Fixes `documents.embedding` dimension 1536 → 768 to match the local embedder's actual output. **Destructive**: truncates `documents`; re-ingest required. |
 
 ## Deployment / operations checklist
 
-- Apply migrations 0–6 and back up before applying (see the table above and
+- Apply migrations 0–7 and back up before applying (see the table above and
   [`docs/operations/migrations-and-rollbacks.md`](docs/operations/migrations-and-rollbacks.md)).
 - Set `CORS_ORIGINS` to an explicit allow-list in production (wildcard is rejected).
 - Set `SUPABASE_JWT_SECRET` in production — without it, the app/worker refuse
@@ -350,6 +404,13 @@ applying and roll back by restoring the backup — see
   use it. It is allowed only in `ingest/*`, `cleanup/`, `audit/events.py` and
   `authz/service.py` admin management (enforced by a static test — see
   [`lawfirm-rag/tests/test_service_role_static.py`](lawfirm-rag/tests/test_service_role_static.py)).
+- If you set `OPENAI_API_KEY` (switching the embedder from local
+  nomic-embed-text-v1.5 to OpenAI), no schema change is needed — both paths
+  are pinned to `EMBEDDING_DIM` (768 by default). If you change
+  `EMBEDDING_DIM` itself, you must also re-run migration `0007`'s column
+  re-type (with a new dimension) and re-ingest.
+- `USE_AGENTIC_CHUNKING` is off by default; see the Weaknesses entry above
+  before enabling it in production.
 - Keep `.env` out of version control (see `.gitignore`); no secrets are committed.
 
 ## Further reading

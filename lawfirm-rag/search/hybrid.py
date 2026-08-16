@@ -58,5 +58,16 @@ def hybrid_search(
             docs.append(Document(page_content=content, metadata=meta))
         return docs
     except Exception as exc:  # Graceful fallback if RPC isn't installed yet
-        logger.debug("hybrid_search failed or RPC missing: %s", exc)
+        # WARNING, not debug: this is the signal that retrieval silently
+        # degraded to vector-only search (weaker recall, no keyword/BM25
+        # signal). Previously logged at debug level with no root logging
+        # configured anywhere, so this never reached any log output at all.
+        logger.warning(
+            "hybrid_search RPC failed or missing (falling back to vector-only "
+            "similarity search) | query=%r match_count=%d doc_type_filter=%r | %s",
+            query_text,
+            match_count,
+            doc_type_filter,
+            exc,
+        )
         return []
