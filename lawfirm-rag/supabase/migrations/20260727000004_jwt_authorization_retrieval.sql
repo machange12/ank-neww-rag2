@@ -109,12 +109,17 @@ create policy "auth_uid can select document_metadata" on public.document_metadat
 -- ------------------------------------------------------------
 -- Retrieval RPCs — SECURITY INVOKER + auth_* predicates
 -- ------------------------------------------------------------
+-- id bigint matches documents.id's actual type on deployments where the
+-- table predates this migration set (see baseline's comment on this same
+-- point) — DROP first since CREATE OR REPLACE can't change return shape.
+drop function if exists public.match_documents_rls(vector, int, jsonb);
+
 create or replace function public.match_documents_rls(
   query_embedding vector,
   match_count     int   default 20,
   filter          jsonb default '{}'::jsonb
 )
-returns table (id uuid, content text, metadata jsonb, access_level int, matter_id text, similarity float)
+returns table (id bigint, content text, metadata jsonb, access_level int, matter_id text, similarity float)
 language sql
 security invoker
 set search_path = public, extensions
@@ -139,6 +144,8 @@ $$;
 grant execute on function public.match_documents_rls(vector, int, jsonb)
   to authenticated, anon;
 
+drop function if exists public.hybrid_search_rls(text, vector, int, int, text);
+
 create or replace function public.hybrid_search_rls(
   query_text      text,
   query_embedding vector,
@@ -146,7 +153,7 @@ create or replace function public.hybrid_search_rls(
   rrf_k           int   default 60,
   doc_type_filter text  default null
 )
-returns table (id uuid, content text, metadata jsonb, access_level int, matter_id text, rrf_score float)
+returns table (id bigint, content text, metadata jsonb, access_level int, matter_id text, rrf_score float)
 language plpgsql
 security invoker
 set search_path = public, extensions
@@ -179,16 +186,23 @@ begin
     order by ts_rank_cd(to_tsvector('english', d.content), plainto_tsquery('english', query_text)) desc
     limit match_count
   ),
+  -- `id`/`score` below are qualified with `ranked.` — this is a PL/pgSQL
+  -- function with RETURNS TABLE(id bigint, ...), which implicitly declares
+  -- `id` as an OUT-parameter variable in scope for the whole function body.
+  -- An unqualified `id` in the CTE is ambiguous between that variable and
+  -- the CTE's own column, and errors at call time (not at CREATE FUNCTION
+  -- time, since PL/pgSQL body isn't parsed until first execution) — this
+  -- was never actually exercised before being fixed here.
   fused as (
     select
-      id,
-      sum(score)::float as rrf_score
+      ranked.id,
+      sum(ranked.score)::float as rrf_score
     from (
-      select id, 1.0 / (rrf_k + rank) as score from vector_results
+      select vector_results.id, 1.0 / (rrf_k + vector_results.rank) as score from vector_results
       union all
-      select id, 1.0 / (rrf_k + rank) as score from keyword_results
+      select keyword_results.id, 1.0 / (rrf_k + keyword_results.rank) as score from keyword_results
     ) ranked
-    group by id
+    group by ranked.id
   )
   select
     d.id,

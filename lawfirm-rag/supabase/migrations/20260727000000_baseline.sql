@@ -165,12 +165,23 @@ grant execute on function public.delete_documents_by_file_id(text)
 -- by the function predicate AND by the RLS policy (SECURITY
 -- INVOKER). Reads lawfirm.* GUCs in this baseline.
 -- ------------------------------------------------------------
+-- DROP first, not just CREATE OR REPLACE: on a deployment where
+-- `documents` already existed before this migration set (bigint PK,
+-- not the uuid this baseline declares for a fresh install), the
+-- function's previously-created return row also used `id bigint`.
+-- CREATE OR REPLACE cannot change a function's return row shape —
+-- only DROP + CREATE can. `id bigint` below matches actual reality
+-- (documents.id), not aspirational uuid; nothing in the Python app
+-- reads `id` from this RPC's result (only content/metadata), so this
+-- is safe regardless of which PK type documents.id actually has.
+drop function if exists public.match_documents_rls(vector, int, jsonb);
+
 create or replace function public.match_documents_rls(
   query_embedding vector,
   match_count     int   default 20,
   filter          jsonb default '{}'::jsonb
 )
-returns table (id uuid, content text, metadata jsonb, access_level int, matter_id text, similarity float)
+returns table (id bigint, content text, metadata jsonb, access_level int, matter_id text, similarity float)
 language sql
 security invoker
 set search_path = public, extensions
@@ -203,6 +214,13 @@ grant execute on function public.match_documents_rls(vector, int, jsonb)
 -- hybrid_search_rls — RRF fusion of vector + tsvector, same
 -- authorization model as match_documents_rls in this baseline.
 -- ------------------------------------------------------------
+-- See the match_documents_rls comment above re: DROP-before-CREATE and
+-- `id bigint`. Defensive here too (currently a no-op if only the old
+-- 4-arg overload exists, since arg count is part of a function's
+-- identity — but robust if a 5-arg overload with a uuid id already
+-- exists on some deployment).
+drop function if exists public.hybrid_search_rls(text, vector, int, int, text);
+
 create or replace function public.hybrid_search_rls(
   query_text      text,
   query_embedding vector,
@@ -210,7 +228,7 @@ create or replace function public.hybrid_search_rls(
   rrf_k           int   default 60,
   doc_type_filter text  default null
 )
-returns table (id uuid, content text, metadata jsonb, access_level int, matter_id text, rrf_score float)
+returns table (id bigint, content text, metadata jsonb, access_level int, matter_id text, rrf_score float)
 language plpgsql
 security invoker
 set search_path = public, extensions
@@ -247,22 +265,26 @@ begin
     order by ts_rank_cd(to_tsvector('english', d.content), plainto_tsquery('english', query_text)) desc
     limit match_count
   ),
+  -- See migration 0004's identical comment: `id` is qualified with
+  -- `ranked.` because RETURNS TABLE(id bigint, ...) makes `id` an
+  -- implicit OUT-parameter variable, ambiguous against the CTE's own
+  -- unqualified `id` column at call time.
   fused as (
     select
-      id,
-      sum(score)::float as rrf_score
+      ranked.id,
+      sum(ranked.score)::float as rrf_score
     from (
       select
-        id,
-        1.0 / (rrf_k + rank) as score
+        vector_results.id,
+        1.0 / (rrf_k + vector_results.rank) as score
       from vector_results
       union all
       select
-        id,
-        1.0 / (rrf_k + rank) as score
+        keyword_results.id,
+        1.0 / (rrf_k + keyword_results.rank) as score
       from keyword_results
     ) ranked
-    group by id
+    group by ranked.id
   )
   select
     d.id,
@@ -285,12 +307,14 @@ grant execute on function public.hybrid_search_rls(text, vector, int, int, text)
 -- match_documents — NO RLS (SECURITY DEFINER), service_role only.
 -- Used by the ingest worker for internal indexing paths.
 -- ------------------------------------------------------------
+drop function if exists public.match_documents(vector, int, jsonb);
+
 create or replace function public.match_documents(
   query_embedding vector,
   match_count     int   default 20,
   filter          jsonb default '{}'::jsonb
 )
-returns table (id uuid, content text, metadata jsonb, similarity float)
+returns table (id bigint, content text, metadata jsonb, similarity float)
 language sql
 security definer
 set search_path = public, extensions

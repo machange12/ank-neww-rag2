@@ -15,6 +15,15 @@
 -- Idempotent: safe to re-run.
 -- ================================================================
 
+-- Prerequisite: this function filters on created_at, which the baseline
+-- `create table if not exists` never adds to a `documents` table that
+-- already existed before these migrations were applied (as found on a live
+-- deployment that predates this migration set — IF NOT EXISTS means it's a
+-- no-op against an existing table, so a column baseline "declares" isn't
+-- guaranteed to actually be there). Safe/idempotent either way.
+alter table public.documents
+  add column if not exists created_at timestamptz not null default now();
+
 create or replace function public.delete_documents_by_file_id_before(
   p_file_id text,
   p_before  timestamptz

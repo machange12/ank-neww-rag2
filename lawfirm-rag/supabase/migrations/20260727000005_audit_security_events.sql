@@ -18,11 +18,26 @@ create table if not exists public.security_events
   actor_email  text,
   event_type   text not null,
   action       text not null,
-  outcome      text not null,
+  outcome      text not null default 'unknown',
   detail       text,
   ip_address   text,
   created_at   timestamptz not null default now()
 );
+
+-- Additive, in case security_events already existed under a different
+-- (bespoke, pre-migration-tracking) shape — found on a live deployment
+-- with `actor text` instead of `user_id uuid`, and missing
+-- outcome/actor_email/detail/ip_address entirely. audit/events.py writes
+-- user_id/outcome/actor_email/detail/ip_address on every event; without
+-- these columns every audit write was silently failing (caught by
+-- record_event's best-effort try/except).
+alter table public.security_events add column if not exists tenant_id uuid references public.tenants(id);
+alter table public.security_events add column if not exists user_id uuid;
+alter table public.security_events add column if not exists actor_email text;
+alter table public.security_events add column if not exists outcome text not null default 'unknown';
+alter table public.security_events add column if not exists detail text;
+alter table public.security_events add column if not exists ip_address text;
+
 create index if not exists security_events_user_idx on public.security_events (user_id);
 create index if not exists security_events_type_idx on public.security_events (event_type, created_at);
 

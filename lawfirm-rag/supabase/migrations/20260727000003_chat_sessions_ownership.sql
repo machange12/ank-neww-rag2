@@ -19,6 +19,12 @@
 -- ------------------------------------------------------------
 alter table public.chat_sessions
   add column if not exists id uuid not null default gen_random_uuid();
+-- Required before chat_memory.session_uuid (below) can reference this
+-- column: a bare ADD COLUMN gives it no uniqueness, and Postgres refuses
+-- a foreign key against a column with no unique constraint/index. This
+-- was missing outright — would have failed the same way on a from-scratch
+-- baseline+0003 apply, not just against a pre-existing live schema.
+create unique index if not exists chat_sessions_id_uq on public.chat_sessions (id);
 alter table public.chat_sessions
   add column if not exists tenant_id uuid references public.tenants(id);
 alter table public.chat_sessions
@@ -76,10 +82,29 @@ alter table public.query_feedback
 alter table public.query_feedback
   add column if not exists user_id_uuid uuid;
 
-update public.query_feedback
-set user_id_uuid = nullif(user_id, '')::uuid
-where user_id_uuid is null
-  and user_id ~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$';
+-- Type-aware: baseline declares query_feedback.user_id as text, but on a
+-- deployment where this table predates this migration set, user_id may
+-- already be uuid (found live) — a text regex/cast against an already-uuid
+-- column is a type error, not just a no-op.
+do $$
+declare
+  user_id_type text;
+begin
+  select data_type into user_id_type
+  from information_schema.columns
+  where table_schema = 'public' and table_name = 'query_feedback' and column_name = 'user_id';
+
+  if user_id_type = 'uuid' then
+    update public.query_feedback
+    set user_id_uuid = user_id
+    where user_id_uuid is null;
+  else
+    update public.query_feedback
+    set user_id_uuid = nullif(user_id, '')::uuid
+    where user_id_uuid is null
+      and user_id ~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$';
+  end if;
+end $$;
 
 create index if not exists idx_feedback_user_uuid on public.query_feedback (user_id_uuid);
 

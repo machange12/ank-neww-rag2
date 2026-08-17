@@ -89,7 +89,7 @@ and the legal-evidence/citation tooling is typed, deterministic and conservative
 
 ### Ops & tooling
 
-- Versioned SQL migrations (`supabase/migrations/` `0000`–`0007`), single source of truth; legacy `sql/*` frozen as deprecated reference.
+- Versioned SQL migrations (`supabase/migrations/` `0000`–`0009`), single source of truth; legacy `sql/*` frozen as deprecated reference.
 - Offline pytest suite (64 tests) covering authz policy, upload acceptance, citations, legal evidence, schema manifest, service-role isolation, session ownership.
 - Schema manifest verifier (`scripts/verify_schema.py`), migration runner (`scripts/apply_migrations.py`), chat/ingest smoke tests, OAuth token helper.
 - Retrieval-quality eval harness (`scripts/eval_retrieval.py`) — golden-set hit-rate / zero-result-rate against a running backend.
@@ -130,6 +130,74 @@ and the legal-evidence/citation tooling is typed, deterministic and conservative
 
 The following were identified as weaknesses and have since been resolved:
 
+- **Live database migrated to `0000`–`0009` and verified (`scripts/verify_schema.py` — SCHEMA OK).**
+  The live Supabase DB had never had any migration applied (no
+  `schema_migrations` table at all) and had evolved a bespoke schema that
+  diverged from what migrations 0000–0007 assumed in several concrete ways —
+  each one only surfaced by actually attempting the migration against real
+  data (22 rows in `documents`, 18 in `document_metadata`, preserved
+  throughout):
+  - `hybrid_search_rls` only had the old 4-arg signature (no
+    `doc_type_filter`), causing `PGRST202` on every doc-type-hinted chat
+    query. Fixed by migration `0004`.
+  - **Critical, live authorization bypass**: that old 4-arg
+    `hybrid_search_rls` overload was `SECURITY DEFINER` with **no
+    `access_level`/`matter_id` filtering at all**. Once the new 5-arg
+    version existed alongside it, any query that didn't set a doc-type hint
+    (most queries) resolved to the *insecure* overload — any authenticated
+    user could retrieve any document regardless of clearance or matter
+    grants. Migration `0008` drops the insecure overload; Postgres then
+    resolves 4-param calls to the secure 5-arg version's default.
+  - `hybrid_search_rls`'s own SQL had a real bug, present since it was
+    first written (not schema-drift): `RETURNS TABLE(id bigint, ...)`
+    makes `id` an implicit PL/pgSQL variable, and the `fused` CTE's
+    unqualified `id`/`score` references were ambiguous against it — every
+    call errored with "column reference is ambiguous". Never caught before
+    because it had never actually been executed. Fixed by migration `0009`.
+  - `documents.id` and `document_metadata.id` are `bigint` on this
+    deployment, not the `uuid` the migrations declared — `CREATE OR
+    REPLACE FUNCTION` can't change a function's return-row shape, so
+    `match_documents_rls`/`hybrid_search_rls`/`match_documents` needed
+    `DROP FUNCTION IF EXISTS` first, with return type corrected to
+    `id bigint`. The app never reads `id` from these RPC results (only
+    `content`/`metadata`), so this is safe.
+  - `chat_memory` was missing `user_id`/`tenant_id`/`session_uuid`
+    entirely, causing every history-persistence insert to 400. Fixed by
+    migration `0003` (additive `ADD COLUMN IF NOT EXISTS`).
+  - `security_events` was missing `outcome`/`actor_email`/`detail`/
+    `ip_address`/`user_id`/`tenant_id` (had `actor` instead of `user_id`),
+    so every `audit/events.py` write was silently failing. Fixed
+    (migration `0005` now includes the same additive-ALTER pattern).
+  - Migration `0003`'s own `chat_sessions.id uuid` column had no
+    uniqueness constraint before `chat_memory.session_uuid` tried to
+    foreign-key against it — a real bug that would have failed on *any*
+    fresh install, not just this one. Fixed with a `CREATE UNIQUE INDEX`.
+  - Migration `0003`'s `query_feedback.user_id` backfill assumed `text`
+    and used a regex match; live `user_id` was already `uuid`, so the
+    regex operator didn't exist for that type. Made the backfill
+    type-aware (checks `information_schema.columns` at migration time).
+  - Migrations `0006`/`0007` were missing their `schema_migrations`
+    version-marker inserts and weren't in `verify_schema.py`'s required
+    list — the manifest check had silently never verified them.
+  - Migration `0007` (embedding dimension fix) was written assuming the
+    live column would be the wrong dimension and unconditionally
+    truncated `documents`. It turned out this deployment's `embedding`
+    column was **already** `vector(768)` — an unconditional truncate
+    would have destroyed 22 real, already-correct rows for no reason.
+    Rewritten to check the actual live dimension first and only
+    truncate+retype when it's actually wrong.
+- **Password exposure during this work — rotate immediately if you
+  haven't.** A redaction attempt printed a fragment of the database
+  password to a terminal transcript, and a since-superseded password was
+  also pasted directly into chat. Both are compromised by virtue of having
+  been visible in a session transcript; rotate the Supabase database
+  password again (Project Settings → Database → Reset database password)
+  independent of anything above.
+- **Google Drive OAuth token is expired/revoked (`invalid_grant`)** —
+  scheduled Drive sync and nightly cleanup fail every run; manual upload
+  ingest is unaffected. This needs an interactive browser consent flow
+  (`scripts/get_refresh_token.py`) that can't be run from this environment
+  — run it yourself and update `GOOGLE_REFRESH_TOKEN` in `.env`.
 - **Embedding/schema dimension mismatch — confirmed, was breaking every
   ingest.** The default embedder path (local `nomic-embed-text-v1.5`, active
   whenever `OPENAI_API_KEY` is unset) outputs 768-dim vectors — confirmed by
@@ -287,7 +355,7 @@ FastAPI app (app.py)  +  ingest worker (ingest/worker.py)
    Supabase PostgREST        ingest/worker paths
         │                       │
         ▼                       ▼
-   Postgres + RLS + migrations 0000..0007
+   Postgres + RLS + migrations 0000..0009
         ├─ chat_sessions / chat_memory        (ownership RLS: user_id_uuid)
         ├─ user_profiles / matter_access      (authorization facts)
         ├─ documents / document_metadata      (retrieval, matter + level RLS)
@@ -388,11 +456,13 @@ applying and roll back by restoring the backup — see
 | `20260727000004_jwt_authorization_retrieval.sql` | `auth.uid()`-derived RLS + RPC predicates; JWT-claims auth; `set_access_context` deprecated |
 | `20260727000005_audit_security_events.sql` | `audit_security_events` append-only table + policies |
 | `20260727000006_atomic_reingest.sql` | `delete_documents_by_file_id_before` — lets re-ingest insert new chunks before deleting stale ones, instead of the reverse |
-| `20260727000007_embedding_dimension_768.sql` | Fixes `documents.embedding` dimension 1536 → 768 to match the local embedder's actual output. **Destructive**: truncates `documents`; re-ingest required. |
+| `20260727000007_embedding_dimension_768.sql` | Fixes `documents.embedding` dimension → 768 to match the local embedder's actual output. Conditional: only truncates+retypes `documents` if the live dimension is actually wrong. |
+| `20260727000008_drop_insecure_hybrid_search_overload.sql` | **Security fix**: drops a live, pre-existing 4-arg `hybrid_search_rls` overload that was `SECURITY DEFINER` with no `access_level`/`matter_id` filtering — an authorization bypass for any query without a doc-type hint. |
+| `20260727000009_fix_hybrid_search_ambiguous_id.sql` | Fixes an ambiguous `id` column reference in `hybrid_search_rls`'s `fused` CTE (real bug present since the function was first written; every call errored). |
 
 ## Deployment / operations checklist
 
-- Apply migrations 0–7 and back up before applying (see the table above and
+- Apply migrations 0–9 and back up before applying (see the table above and
   [`docs/operations/migrations-and-rollbacks.md`](docs/operations/migrations-and-rollbacks.md)).
 - Set `CORS_ORIGINS` to an explicit allow-list in production (wildcard is rejected).
 - Set `SUPABASE_JWT_SECRET` in production — without it, the app/worker refuse
