@@ -16,6 +16,7 @@ from deps import (
     resolve_user_client,
     token_from_header,
 )
+from postgrest_utils import response_data
 from rbac.checker import build_rbac_block
 from ratelimit import rate_limiter
 from rls.filter_builder import build_rls_filter
@@ -191,7 +192,7 @@ async def submit_feedback(
         .limit(1)
         .execute()
     )
-    owned_data = getattr(owned_res, "data", None) or owned_res
+    owned_data = response_data(owned_res)
     if not (isinstance(owned_data, list) and owned_data):
         raise HTTPException(status_code=404, detail="NOT_FOUND: session does not belong to this user")
 
@@ -208,7 +209,7 @@ async def submit_feedback(
         })
         .execute()
     )
-    data = getattr(res, "data", None) or res
+    data = response_data(res)
     inserted = data[0] if isinstance(data, list) and data else {}
     inserted_id = inserted.get("id")
 

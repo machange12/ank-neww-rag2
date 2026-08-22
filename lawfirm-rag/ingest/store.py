@@ -9,6 +9,7 @@ from typing import Any
 from ingest.classifier import classify_document, extract_legal_entities
 from ingest.embed import CHUNKING_VERSION, chunk_text_auto, embed_chunks, total_tokens
 from ingest.extract import extract_text
+from postgrest_utils import response_data
 from search.service_client import make_service_client
 
 from config import settings
@@ -31,7 +32,7 @@ async def check_last_modified(file_id: str, drive_modified_time: str | None) -> 
     client = make_service_client()
     try:
         res = client.table("document_metadata").select("drive_modified_time").eq("file_id", file_id).execute()
-        data = getattr(res, "data", None) or res
+        data = response_data(res)
         if isinstance(data, list) and data:
             return data[0].get("drive_modified_time") == drive_modified_time
     except Exception:  # noqa: BLE001
@@ -80,7 +81,7 @@ async def upsert_file(
         res = client.table("document_metadata").select("content_hash").eq("file_id", file_id).execute()
         existing_hash = None
         # Supabase client returns .data in some variants, or raw list in others
-        data = getattr(res, "data", None) or res
+        data = response_data(res)
         if isinstance(data, list) and len(data) > 0:
             existing_hash = data[0].get("content_hash")
     except Exception:

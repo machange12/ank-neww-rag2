@@ -25,6 +25,7 @@ export default function ANKRagDashboard() {
   const chat = useChat({
     apiFetch: auth.apiFetch,
     token: auth.token,
+    authHeaders: auth.authHeaders,
     setStatus,
     setActiveNav,
     setError: banner.setError,

@@ -9,15 +9,12 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from config import settings
 from ingest.downloader import DriveAuthError, download_file, list_folder_files
 from ingest.store import check_last_modified, upsert_file
+from postgrest_utils import response_data as _response_data
 from search.service_client import make_service_client
 
 logger = logging.getLogger(__name__)
 
 _scheduler: AsyncIOScheduler | None = None
-
-
-def _response_data(response: Any) -> Any:
-    return getattr(response, "data", None) or response
 
 
 def _existing_hash(client: Any, file_id: str) -> str | None:

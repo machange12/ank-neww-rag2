@@ -9,12 +9,9 @@ import logging
 from typing import Any
 
 from authz.models import AccessDenied, MatterGrant, UserProfile
+from postgrest_utils import response_data as _response_data
 
 logger = logging.getLogger(__name__)
-
-
-def _response_data(response: Any) -> Any:
-    return getattr(response, "data", None) or response
 
 
 def load_profile(user_client: Any, user_id: str) -> UserProfile | None:
@@ -64,8 +61,7 @@ def can_administer_matter_ref(user_client: Any, matter_ref: str) -> bool:
         return False
     try:
         res = user_client.rpc("auth_can_administer_matter_ref", {"p_matter_ref": matter_ref}).execute()
-        data = getattr(res, "data", None) or res
-        return bool(data)
+        return bool(_response_data(res))
     except Exception as exc:  # noqa: BLE001
         logger.warning("auth_can_administer_matter_ref failed for ref=%r: %s", matter_ref, exc)
         return False

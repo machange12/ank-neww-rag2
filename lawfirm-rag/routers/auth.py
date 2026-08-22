@@ -6,6 +6,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from postgrest_utils import response_data
 from search.supabase_client import make_anon_client
 
 router = APIRouter(tags=["auth"])
@@ -42,7 +43,7 @@ def _resolve_profile_role_level(client: Any, user_id: str | None) -> tuple[str |
             .limit(1)
             .execute()
         )
-        data = getattr(res, "data", None) or res
+        data = response_data(res)
         rows = data if isinstance(data, list) else []
         if rows:
             row = rows[0]

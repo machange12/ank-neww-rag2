@@ -4,6 +4,7 @@ import logging
 from typing import Any
 
 from ingest.downloader import DriveAuthError, list_folder_files
+from postgrest_utils import response_data
 from search.service_client import make_service_client
 
 logger = logging.getLogger(__name__)
@@ -23,7 +24,7 @@ def _select_all(client: Any, table: str, columns: str) -> list[dict[str, Any]]:
     start = 0
     while True:
         res = client.table(table).select(columns).range(start, start + _PAGE_SIZE - 1).execute()
-        page = getattr(res, "data", None) or res
+        page = response_data(res)
         page = page if isinstance(page, list) else []
         rows.extend(page)
         if len(page) < _PAGE_SIZE:

@@ -54,7 +54,15 @@ class Settings(BaseSettings):
     # silently producing 768-dim vectors against a vector(1536) column, which
     # fails every insert. See supabase/migrations/20260727000007.
     embedding_dim: int = 768
-    chat_model: str = "llama-3.3-70b-versatile"
+    # llama-3.3-70b-versatile was removed from Groq's lineup entirely
+    # (confirmed live: every chat call was 404ing "model does not exist",
+    # silently degrading to the hallucination-guard's canned no-answer
+    # response since MultiQueryRetriever's LLM call failed too). Verified
+    # openai/gpt-oss-120b works and returns clean content (its chain-of-
+    # thought goes in a separate `reasoning` field, unlike e.g.
+    # qwen/qwen3.6-27b which inlines <think> tags into content and breaks
+    # the JSON-extraction in classify_intent).
+    chat_model: str = "openai/gpt-oss-120b"
     chat_max_tokens: int = 4096
     # Token-based (tiktoken cl100k_base), not character-based — see
     # ingest/embed.py. nomic-embed-text-v1.5 supports an 8192-token context;

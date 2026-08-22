@@ -18,6 +18,7 @@ from typing import Any
 from fastapi import HTTPException
 
 from authz import service as authz_service
+from postgrest_utils import response_data
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +48,7 @@ def resolve_matter_ref(user_client: Any, requested_matter: str) -> str:
             .limit(1)
             .execute()
         )
-        data = getattr(res, "data", None) or res
+        data = response_data(res)
         rows = data if isinstance(data, list) else []
         if rows and rows[0].get("matter_ref"):
             return rows[0]["matter_ref"]
@@ -80,7 +81,7 @@ def matter_uuid_for(user_client: Any, requested_matter: str) -> str | None:
             .limit(1)
             .execute()
         )
-        data = getattr(res, "data", None) or res
+        data = response_data(res)
         rows = data if isinstance(data, list) else []
         if rows and rows[0].get("id"):
             return rows[0]["id"]

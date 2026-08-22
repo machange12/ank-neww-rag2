@@ -8,7 +8,7 @@ const DEFAULT_QUERY =
 // Research query/answer/sources, conversation session id, and local
 // History/Saved. `token` is only watched to reset the conversation session on
 // login/sign-out (both go through a token change) — it's not read directly.
-export function useChat({ apiFetch, token, setStatus, setActiveNav, setError, setNotice }) {
+export function useChat({ apiFetch, token, authHeaders, setStatus, setActiveNav, setError, setNotice }) {
   const [query, setQuery] = useState(DEFAULT_QUERY);
   const [answer, setAnswer] = useState("");
   const [sources, setSources] = useState([]);
@@ -40,7 +40,7 @@ export function useChat({ apiFetch, token, setStatus, setActiveNav, setError, se
       // as chat history) instead of starting a fresh session every request.
       const response = await apiFetch("/lawfirm-chat-trigger-006", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({ chatInput: query, ...(sessionId ? { sessionId } : {}) }),
       });
       const data = await parseJsonResponse(response, "RAG request failed");

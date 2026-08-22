@@ -99,14 +99,23 @@ def _detect_heading(text: str) -> str:
     return ""
 
 
-def chunk_text(text: str) -> list[TextChunk]:
+def chunk_text(
+    text: str,
+    chunk_size: int | None = None,
+    chunk_overlap: int | None = None,
+) -> list[TextChunk]:
     """
     Split legal document text into chunks using Kenyan legal document structure.
     Returns list of TextChunk namedtuples with text, section_heading, and chunk_index.
+
+    ``chunk_size``/``chunk_overlap`` default to settings.chunk_size/chunk_overlap
+    (the production values) when omitted. The override params exist so
+    scripts/experiment_chunk_sizes.py can compare sizes against a golden set
+    without touching production ingest defaults.
     """
     splitter = RecursiveCharacterTextSplitter(
-        chunk_size=settings.chunk_size,
-        chunk_overlap=settings.chunk_overlap,
+        chunk_size=chunk_size if chunk_size is not None else settings.chunk_size,
+        chunk_overlap=chunk_overlap if chunk_overlap is not None else settings.chunk_overlap,
         separators=LEGAL_SEPARATORS,
         length_function=_token_length,
         is_separator_regex=True,

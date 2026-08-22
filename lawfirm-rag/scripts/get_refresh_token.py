@@ -19,10 +19,18 @@ from __future__ import annotations
 
 import os
 import sys
+from pathlib import Path
 
+from dotenv import load_dotenv
 from google_auth_oauthlib.flow import InstalledAppFlow
 
 SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
+
+# Unlike the rest of the app (config.py, via pydantic-settings), this script
+# previously read raw os.getenv() only — meaning GOOGLE_OAUTH_CLIENT_ID/
+# SECRET in .env were never actually picked up unless separately exported
+# into the shell. Load .env explicitly, same file config.py uses.
+load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env")
 
 
 def main() -> int:

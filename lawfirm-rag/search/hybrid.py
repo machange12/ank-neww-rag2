@@ -5,6 +5,7 @@ from typing import Any, List
 
 from langchain_core.documents import Document
 from config import settings
+from postgrest_utils import response_data
 from providers import get_embeddings
 
 logger = logging.getLogger(__name__)
@@ -47,14 +48,26 @@ def hybrid_search(
 
         resp = client.rpc("hybrid_search_rls", rpc_params).execute()
 
-        data = getattr(resp, "data", None) or resp
+        # response_data(), not `getattr(resp, "data", None) or resp`: a
+        # genuinely empty match list ([]) is falsy and `or` would silently
+        # fall back to iterating the response object itself, raising
+        # 'tuple' object has no attribute 'get' on every zero-match query —
+        # confirmed live, previously misreported as "RPC failed" and forcing
+        # every such (perfectly normal) query onto the slower vector-only
+        # fallback path.
+        data = response_data(resp)
         if not data:
             return []
 
         docs: List[Document] = []
         for row in data:
             content = row.get("content") or ""
-            meta = row.get("metadata") or {}
+            meta = dict(row.get("metadata") or {})
+            # Row id isn't in the JSONB metadata blob itself, but callers
+            # (retrieval-only eval harness) need the underlying chunk id to
+            # score Recall@K against a golden set of chunk ids.
+            if row.get("id") is not None:
+                meta.setdefault("chunk_id", row.get("id"))
             docs.append(Document(page_content=content, metadata=meta))
         return docs
     except Exception as exc:  # Graceful fallback if RPC isn't installed yet

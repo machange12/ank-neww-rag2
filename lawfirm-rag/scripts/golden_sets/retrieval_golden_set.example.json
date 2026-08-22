@@ -1,0 +1,23 @@
+[
+  {
+    "query": "What are the notice requirements under Kenya's DPA for a personal data breach?",
+    "relevant_chunk_ids": [123, 456],
+    "relevant_file_ids": ["REPLACE_WITH_A_REAL_file_id"],
+    "relevant_text_snippet": "72 hours",
+    "doc_type": "statute"
+  },
+  {
+    "query": "What did the court hold on the limitation period issue?",
+    "relevant_chunk_ids": [789],
+    "relevant_file_ids": ["REPLACE_WITH_A_REAL_file_id"],
+    "relevant_text_snippet": "limitation period",
+    "doc_type": "judgment"
+  },
+  {
+    "query": "What are the termination clauses in the lease agreement?",
+    "relevant_chunk_ids": [321],
+    "relevant_file_ids": ["REPLACE_WITH_A_REAL_file_id"],
+    "relevant_text_snippet": "terminate this lease",
+    "doc_type": "contract"
+  }
+]

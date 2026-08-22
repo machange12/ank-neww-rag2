@@ -79,7 +79,13 @@ def make_chat_llm(streaming: bool = False) -> Any:
     from langchain_openai import ChatOpenAI
 
     model = settings.chat_model
-    if model == "llama-3.3-70b-versatile":
+    # settings.chat_model is normally a Groq model id (llama-*, or Groq's
+    # "org/model" naming like openai/gpt-oss-120b) — meaningless to the
+    # OpenAI API. Previously this only special-cased one exact legacy
+    # value (llama-3.3-70b-versatile); any other Groq model id configured
+    # here would have been sent to OpenAI's API verbatim and 404'd. Real
+    # OpenAI chat model ids all start with "gpt-".
+    if not model.startswith("gpt-"):
         model = OPENAI_CHAT_MODEL
     return ChatOpenAI(
         model=model,

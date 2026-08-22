@@ -5,6 +5,8 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
+from postgrest_utils import response_data
+
 logger = logging.getLogger(__name__)
 
 # The single-firm tenant id provisioned by migration 0001.
@@ -25,7 +27,7 @@ async def _fetch_tenant_id(user_client: Any, user_id: str) -> str | None:
             .limit(1)
             .execute()
         )
-        data = getattr(res, "data", None) or res
+        data = response_data(res)
         if isinstance(data, list) and data and data[0].get("tenant_id"):
             return data[0]["tenant_id"]
     except Exception as exc:  # noqa: BLE001
@@ -65,7 +67,7 @@ async def _find_owned_session(user_client: Any, session_id: str, user_id: str) -
             .limit(1)
             .execute()
         )
-        data = getattr(res, "data", None) or res
+        data = response_data(res)
         if isinstance(data, list) and data:
             return data[0]
     except Exception as exc:  # noqa: BLE001
@@ -169,7 +171,7 @@ async def list_user_sessions(user_client: Any, user_id: str, limit: int = 20) ->
         .limit(max(limit * 2, 200))
         .execute()
     )
-    data = getattr(resp, "data", None) or resp
+    data = response_data(resp)
     rows = data if isinstance(data, list) else []
 
     session_ids = [r.get("session_id") for r in rows if r.get("session_id")]
@@ -184,7 +186,7 @@ async def list_user_sessions(user_client: Any, user_id: str, limit: int = 20) ->
                 .limit(2000)
                 .execute()
             )
-            mem_rows = getattr(mem, "data", None) or mem
+            mem_rows = response_data(mem)
             for row in mem_rows if isinstance(mem_rows, list) else []:
                 msg = row.get("message") or {}
                 if msg.get("type") not in ("human", "HumanMessage"):

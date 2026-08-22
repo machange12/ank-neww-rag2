@@ -5,6 +5,8 @@ from typing import Any, Sequence
 from langchain_core.chat_history import BaseChatMessageHistory
 from langchain_core.messages import BaseMessage, message_to_dict, messages_from_dict
 
+from postgrest_utils import response_data
+
 
 class SupabaseChatHistory(BaseChatMessageHistory):
     """
@@ -39,7 +41,7 @@ class SupabaseChatHistory(BaseChatMessageHistory):
             .order("created_at", desc=False)
             .execute()
         )
-        data = getattr(resp, "data", None) or resp
+        data = response_data(resp)
         rows = data if isinstance(data, list) else []
         return messages_from_dict([row.get("message") for row in rows if row.get("message")])
 
