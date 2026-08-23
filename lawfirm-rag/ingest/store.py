@@ -13,7 +13,7 @@ from postgrest_utils import response_data
 from search.service_client import make_service_client
 
 from config import settings
-from langchain_openai import ChatOpenAI
+from providers import make_chat_llm
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +97,14 @@ async def upsert_file(
     # A classifier failure must NEVER break ingest: fall back to empty metadata.
     doc_intelligence: dict[str, Any] = {}
     try:
-        _llm = ChatOpenAI(model="gpt-4o-mini", temperature=0, api_key=settings.openai_api_key)
+        # Was hardcoded to ChatOpenAI(api_key=settings.openai_api_key) — this
+        # deployment only configures GROQ_API_KEY, so that client had no valid
+        # credentials and every classify_document()/extract_legal_entities()
+        # call failed auth silently (caught below, logged as a warning),
+        # defaulting doc_type to "unknown" for every ingested file. This uses
+        # the same provider-selection logic as chat (Groq when configured,
+        # OpenAI fallback), so classification actually runs.
+        _llm = make_chat_llm()
         doc_classification = classify_document(text, file_title, _llm)
         legal_entities = extract_legal_entities(
             text, doc_classification.get("doc_type", "unknown"), _llm

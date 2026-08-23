@@ -37,6 +37,16 @@ RETRIEVED CONTEXT:
 
 NO_RESULT_RESPONSE = "I could not find an answer in the firm's document repository."
 OUT_OF_SCOPE_RESPONSE = "This question is outside the scope of the firm's document repository."
+# Distinct from NO_RESULT_RESPONSE: relevant documents WERE found, but the
+# answer-generation call itself failed (rate limit, timeout, provider
+# outage, etc). Previously both cases returned NO_RESULT_RESPONSE, so a
+# genuine outage/rate-limit was indistinguishable in the UI from "nothing
+# relevant is in the document repository" — see the run_chat/stream_chat
+# LLM invoke except-blocks below.
+GENERATION_FAILED_RESPONSE = (
+    "I found relevant documents but could not generate an answer right now "
+    "(the answer service is temporarily unavailable or rate-limited). Please try again shortly."
+)
 
 # Query-intent → retrieval depth. shorter depths for point questions,
 # deeper recalls for summaries/comparisons across the corpus.
@@ -382,8 +392,21 @@ async def run_chat(
         response = llm.invoke(messages)
         answer = getattr(response, "content", "") or ""
     except Exception as exc:  # noqa: BLE001
-        logger.error("LLM generation failed for session=%s: %s", session_id, exc)
-        answer = NO_RESULT_RESPONSE
+        # Distinct from the zero-doc guard above: retrieval succeeded (docs
+        # is non-empty here), the LLM call itself failed — e.g. a provider
+        # rate limit (confirmed: Groq's on_demand-tier TPM cap rejecting
+        # requests once retrieved context pushes the prompt over its
+        # per-minute token budget). Answering NO_RESULT_RESPONSE here would
+        # make a rate-limited/outage request indistinguishable from a query
+        # with genuinely no matching documents.
+        logger.error(
+            "LLM generation failed | session=%s | query=%r | docs_retrieved=%d | %s",
+            session_id,
+            chat_input,
+            len(docs),
+            exc,
+        )
+        answer = GENERATION_FAILED_RESPONSE
 
     # Persist this turn (user + AI) to chat_memory. A failure must not break the
     # response, so it is isolated in its own try/except.
@@ -470,8 +493,25 @@ async def stream_chat(
             tokens_buffer.append(str(token_content))
             yield token_content
     except Exception as exc:
-        logger.debug("streaming LLM failed: %s", exc)
+        # Same distinction as run_chat(): docs were retrieved, the LLM call
+        # itself failed (rate limit, timeout, provider outage). Was logged at
+        # debug level (never reached any log output — nothing in this
+        # codebase called logging.basicConfig()/dictConfig() at the time) and
+        # silently dropped the client with no explanation. If no tokens made
+        # it out before the failure, surface a distinct message instead of
+        # leaving the client with an empty/truncated answer that looks
+        # identical to a zero-doc "no result" case.
+        logger.error(
+            "streaming LLM generation failed | session=%s | query=%r | docs_retrieved=%d | %s",
+            session_id,
+            chat_input,
+            len(docs),
+            exc,
+        )
         stream_failed = True
+        if not tokens_buffer:
+            yield GENERATION_FAILED_RESPONSE
+            tokens_buffer.append(GENERATION_FAILED_RESPONSE)
 
     # Persist this turn to chat_memory (same table + format as run_chat()),
     # even when the stream failed partway through — a partial answer is still
@@ -493,7 +533,8 @@ async def stream_chat(
     except Exception as exc:  # noqa: BLE001
         logger.debug("streaming memory persistence failed: %s", exc)
 
-    if stream_failed:
-        return
-
+    # Send the sources event even on a failed generation: retrieval genuinely
+    # found these documents (that's the whole point of GENERATION_FAILED_RESPONSE
+    # vs. NO_RESULT_RESPONSE above), so the client should still see them rather
+    # than silently losing the "sources retrieved" panel on a rate-limit/outage.
     yield f"data: {json.dumps({'type': 'sources', 'sources': sources})}\n\n"

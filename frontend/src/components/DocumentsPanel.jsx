@@ -14,11 +14,12 @@ export function DocumentsPanel({
   loadDocuments,
   loadDriveFiles,
   setUploadAccessLevel,
-  setUploadFile,
+  setUploadFiles,
   setUploadMatterId,
   uploadAccessLevel,
   uploadDocument,
-  uploadFile,
+  uploadFiles,
+  uploadProgress,
   uploadMatterId,
   isUploading,
 }) {
@@ -43,12 +44,36 @@ export function DocumentsPanel({
       <form onSubmit={uploadDocument} className="mb-5 rounded-lg border border-gray-200 bg-white p-3">
         <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_150px_150px_auto]">
           <label className="block">
-            <span className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-gray-500">File</span>
-            <input
-              type="file"
-              onChange={(event) => setUploadFile(event.target.files?.[0] || null)}
-              className="block w-full text-xs text-gray-600 file:mr-3 file:rounded-md file:border-0 file:bg-gray-100 file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-gray-700 hover:file:bg-gray-200"
-            />
+            <span className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-gray-500">
+              Files or folder
+            </span>
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                type="file"
+                multiple
+                onChange={(event) => setUploadFiles(Array.from(event.target.files || []))}
+                className="block text-xs text-gray-600 file:mr-3 file:rounded-md file:border-0 file:bg-gray-100 file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-gray-700 hover:file:bg-gray-200"
+              />
+              <label className="cursor-pointer rounded-md border border-gray-300 px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50">
+                Choose folder
+                <input
+                  type="file"
+                  multiple
+                  // Chrome/Edge only: opens a directory picker and returns
+                  // every file inside it (with webkitRelativePath set).
+                  // Firefox/Safari without support just ignore the attribute
+                  // and behave like the plain multi-file input above.
+                  webkitdirectory=""
+                  onChange={(event) => setUploadFiles(Array.from(event.target.files || []))}
+                  className="hidden"
+                />
+              </label>
+            </div>
+            {uploadFiles.length > 0 && (
+              <span className="mt-1 block text-[11px] text-gray-500">
+                {uploadFiles.length} file{uploadFiles.length === 1 ? "" : "s"} selected
+              </span>
+            )}
           </label>
           <label className="block">
             <span className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-gray-500">Matter</span>
@@ -72,10 +97,16 @@ export function DocumentsPanel({
             </select>
           </label>
           <button
-            disabled={!uploadFile || isUploading}
+            disabled={!uploadFiles.length || isUploading}
             className="self-end rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-gray-300"
           >
-            {isUploading ? "Indexing" : "Upload"}
+            {isUploading
+              ? uploadProgress
+                ? `Indexing ${uploadProgress.done}/${uploadProgress.total}`
+                : "Indexing"
+              : uploadFiles.length > 1
+                ? `Upload ${uploadFiles.length} files`
+                : "Upload"}
           </button>
         </div>
       </form>

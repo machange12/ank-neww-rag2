@@ -92,11 +92,12 @@ export default function ANKRagDashboard() {
         loadDocuments={documents.loadDocuments}
         loadDriveFiles={documents.loadDriveFiles}
         setUploadAccessLevel={documents.setUploadAccessLevel}
-        setUploadFile={documents.setUploadFile}
+        setUploadFiles={documents.setUploadFiles}
         setUploadMatterId={documents.setUploadMatterId}
         uploadAccessLevel={documents.uploadAccessLevel}
         uploadDocument={documents.uploadDocument}
-        uploadFile={documents.uploadFile}
+        uploadFiles={documents.uploadFiles}
+        uploadProgress={documents.uploadProgress}
         uploadMatterId={documents.uploadMatterId}
         isUploading={documents.isUploading}
       />

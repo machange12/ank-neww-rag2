@@ -5,15 +5,20 @@ import logging
 import re
 from typing import Any
 
-from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from config import settings
+from providers import make_chat_llm
 
 logger = logging.getLogger(__name__)
 
-CLASSIFIER_MODEL = "gpt-4o-mini"
 ENTITY_TEXT_LIMIT = 6000
+# doc_type/jurisdiction/language are reliably inferable from a document's
+# opening section (title, heading, first few paragraphs) — no need to send
+# the whole document. Capped so classification doesn't blow past small
+# per-minute token limits (e.g. Groq's on_demand tier default TPM caps) on
+# long judgments/statutes, which previously made classify_document() fail
+# outright on any document over a few thousand tokens.
+CLASSIFY_TEXT_LIMIT = 6000
 
 DEFAULT_CLASSIFICATION = {
     "doc_type": "unknown",
@@ -107,9 +112,17 @@ GENERIC_ENTITY_PROMPT = (
 )
 
 
-def _make_llm() -> ChatOpenAI:
-    """Construct the cheap classification ChatOpenAI from settings."""
-    return ChatOpenAI(model=CLASSIFIER_MODEL, temperature=0, api_key=settings.openai_api_key)
+def _make_llm() -> Any:
+    """Construct the classification LLM via the shared provider factory.
+
+    Was a hardcoded ChatOpenAI(api_key=settings.openai_api_key) — deployments
+    that only configure GROQ_API_KEY (no OPENAI_API_KEY) had no valid
+    credentials here, so every call failed auth and silently degraded to the
+    "unknown" doc_type default (caught by the broad except in
+    classify_document/extract_legal_entities below). make_chat_llm() applies
+    the same Groq-then-OpenAI provider selection already used for chat.
+    """
+    return make_chat_llm()
 
 
 def _parse_json(content: str) -> dict[str, Any]:
@@ -128,7 +141,7 @@ def _parse_json(content: str) -> dict[str, Any]:
 def classify_document(
     text: str,
     file_title: str,
-    llm: ChatOpenAI | None = None,
+    llm: Any | None = None,
 ) -> dict[str, str]:
     """
     Classify an ingested document's type, jurisdiction and language.
@@ -139,7 +152,8 @@ def classify_document(
     """
     if llm is None:
         llm = _make_llm()
-    human = HumanMessage(content=f"Document title: {file_title}\n\nDocument text:\n{text}")
+    sample = text[:CLASSIFY_TEXT_LIMIT]
+    human = HumanMessage(content=f"Document title: {file_title}\n\nDocument text:\n{sample}")
     try:
         response = llm.invoke([SystemMessage(content=CLASSIFY_SYSTEM_PROMPT), human])
         result = _parse_json(getattr(response, "content", ""))
@@ -159,7 +173,7 @@ def classify_document(
 def extract_legal_entities(
     text: str,
     doc_type: str,
-    llm: ChatOpenAI | None = None,
+    llm: Any | None = None,
 ) -> dict[str, Any]:
     """
     Extract structured legal entities from the full document text.

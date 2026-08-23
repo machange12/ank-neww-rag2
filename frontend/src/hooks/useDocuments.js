@@ -10,9 +10,13 @@ export function useDocuments({ apiFetch, authHeaders, setError, setNotice }) {
   const [isLoadingDrive, setIsLoadingDrive] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [isIngestingDrive, setIsIngestingDrive] = useState(false);
-  const [uploadFile, setUploadFile] = useState(null);
+  // Array of File objects — either a single file or every file picked from a
+  // folder (input has `multiple` + `webkitdirectory`), so the same state
+  // shape covers both cases without a separate code path.
+  const [uploadFiles, setUploadFiles] = useState([]);
   const [uploadMatterId, setUploadMatterId] = useState("");
   const [uploadAccessLevel, setUploadAccessLevel] = useState("1");
+  const [uploadProgress, setUploadProgress] = useState(null); // { done, total } while a batch is running
 
   async function loadDocuments() {
     setIsLoadingDocuments(true);
@@ -33,38 +37,79 @@ export function useDocuments({ apiFetch, authHeaders, setError, setNotice }) {
     }
   }
 
+  async function uploadOneFile(file) {
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("matter_id", uploadMatterId);
+    formData.append("access_level", uploadAccessLevel);
+
+    const response = await apiFetch("/documents/upload", {
+      method: "POST",
+      headers: authHeaders(),
+      body: formData,
+    });
+    const data = await parseJsonResponse(response, "Upload failed");
+    if (!response.ok) throw new Error(data.error || data.detail || "Upload failed");
+    return data;
+  }
+
+  // Uploads every selected file sequentially against the existing
+  // single-file endpoint (one HTTP request per file). Deliberately NOT a
+  // single batch request: each file must go through its own server-side
+  // classification (authz.policy.classify_upload) and its own audit-trail
+  // entry, exactly as a one-at-a-time upload does today — a folder of 50
+  // files is not an excuse to weaken or bypass that per-file check.
   async function uploadDocument(event) {
     event.preventDefault();
-    if (!uploadFile) return;
+    if (!uploadFiles.length) return;
     setError("");
     setNotice("");
     setIsUploading(true);
-    setDocumentStatus("Uploading document");
-    try {
-      const formData = new FormData();
-      formData.append("file", uploadFile);
-      formData.append("matter_id", uploadMatterId);
-      formData.append("access_level", uploadAccessLevel);
+    setUploadProgress({ done: 0, total: uploadFiles.length });
 
-      const response = await apiFetch("/documents/upload", {
-        method: "POST",
-        headers: authHeaders(),
-        body: formData,
-      });
-      const data = await parseJsonResponse(response, "Upload failed");
-      if (!response.ok) throw new Error(data.error || data.detail || "Upload failed");
-      setUploadFile(null);
-      setNotice(`Indexed ${data.chunks || 0} chunks from ${data.file_id || uploadFile.name}.`);
-      setDocumentStatus("Upload indexed");
-      await loadDocuments();
-    } catch (err) {
-      if (err.message !== "UNAUTHORIZED") {
-        setError(err.message);
+    let indexedChunks = 0;
+    let succeeded = 0;
+    const failures = [];
+
+    for (const file of uploadFiles) {
+      setDocumentStatus(`Uploading ${file.name} (${succeeded + failures.length + 1}/${uploadFiles.length})`);
+      try {
+        const data = await uploadOneFile(file);
+        indexedChunks += data.chunks || 0;
+        succeeded += 1;
+      } catch (err) {
+        if (err.message === "UNAUTHORIZED") {
+          setIsUploading(false);
+          setUploadProgress(null);
+          return;
+        }
+        failures.push({ name: file.name, message: err.message });
+      } finally {
+        setUploadProgress((prev) => ({ done: (prev?.done || 0) + 1, total: uploadFiles.length }));
+      }
+    }
+
+    setUploadFiles([]);
+    setUploadProgress(null);
+    setIsUploading(false);
+
+    if (uploadFiles.length === 1) {
+      if (succeeded === 1) {
+        setNotice(`Indexed ${indexedChunks} chunks from ${uploadFiles[0].name}.`);
+        setDocumentStatus("Upload indexed");
+      } else {
+        setError(failures[0]?.message || "Upload failed");
         setDocumentStatus("Upload failed");
       }
-    } finally {
-      setIsUploading(false);
+    } else {
+      setNotice(
+        `Folder upload complete: ${succeeded}/${uploadFiles.length} files indexed (${indexedChunks} chunks total).` +
+          (failures.length ? ` ${failures.length} failed: ${failures.map((f) => f.name).join(", ")}` : "")
+      );
+      setDocumentStatus(failures.length ? "Folder upload finished with errors" : "Folder upload indexed");
     }
+
+    await loadDocuments();
   }
 
   async function loadDriveFiles() {
@@ -149,8 +194,9 @@ export function useDocuments({ apiFetch, authHeaders, setError, setNotice }) {
     isLoadingDrive,
     isUploading,
     isIngestingDrive,
-    uploadFile,
-    setUploadFile,
+    uploadFiles,
+    setUploadFiles,
+    uploadProgress,
     uploadMatterId,
     setUploadMatterId,
     uploadAccessLevel,
