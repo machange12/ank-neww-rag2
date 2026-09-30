@@ -1,7 +1,7 @@
 # ANK Law Firm RAG (`ank neww rag2`)
 
 A secure **retrieval-augmented generation (RAG)** assistant for a single Kenyan
-law firm, converted from the n8n `RAG LawFirm 2.3456` workflow into a runnable
+law firm, 
 Python **FastAPI** backend + **Supabase** (Postgres + row-level security) +
 **React (Vite)** frontend.
 
