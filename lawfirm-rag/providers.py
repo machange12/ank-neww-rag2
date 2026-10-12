@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from functools import lru_cache
 from typing import Any
 
 from config import settings
@@ -106,6 +107,9 @@ def make_embeddings() -> Any:
     return get_embeddings()
 
 
+# Cached: building the client costs ~1.3s of CPU (httpx/SSL setup) — paid
+# per request before, which is tens of seconds on Render's shared free CPU.
+@lru_cache(maxsize=2)
 def make_chat_llm(streaming: bool = False) -> Any:
     """
     Backward-compatible chat LLM factory.

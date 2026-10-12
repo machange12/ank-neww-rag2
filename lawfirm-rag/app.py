@@ -53,12 +53,12 @@ async def startup_event() -> None:
     import asyncio
 
     from ingest.scheduler import start_scheduler
-    from providers import get_embeddings
+    from agents.rag_agent import warm_clients
 
     start_scheduler()
-    # Load the embedder (~15s on CPU) in the background so the first chat
-    # after a cold start / Space wake-up doesn't pay for it.
-    asyncio.get_running_loop().run_in_executor(None, get_embeddings)
+    # Build the embedder + LLM/reranker clients in the background so the
+    # first chat after a cold start doesn't pay for them.
+    asyncio.get_running_loop().run_in_executor(None, warm_clients)
 
 
 @app.get("/healthz")

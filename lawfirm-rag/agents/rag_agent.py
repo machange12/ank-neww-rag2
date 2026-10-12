@@ -4,6 +4,8 @@ import logging
 import asyncio
 import json
 import re
+import time
+from functools import lru_cache
 from typing import Any, List
 
 from langchain_cohere import CohereRerank
@@ -11,6 +13,7 @@ from langchain_community.vectorstores import SupabaseVectorStore
 from langchain_core.retrievers import BaseRetriever
 from langchain_core.documents import BaseDocumentCompressor, Document
 from langchain_core.messages import SystemMessage, HumanMessage
+from langchain_classic.retrievers import ContextualCompressionRetriever
 from langchain_classic.retrievers.multi_query import MultiQueryRetriever
 
 from search.hybrid import hybrid_search
@@ -197,6 +200,24 @@ class _FailOpenRerank(BaseDocumentCompressor):
             return list(documents)[: self.top_n]
 
 
+@lru_cache(maxsize=1)
+def _cohere_reranker() -> "_FailOpenRerank":
+    # Cached: CohereRerank() costs ~1s of CPU to build (client/SSL setup).
+    return _FailOpenRerank(inner=CohereRerank(
+        cohere_api_key=settings.cohere_api_key,
+        top_n=5,
+        model="rerank-v3.5",
+    ))
+
+
+def warm_clients() -> None:
+    get_embeddings()
+    make_chat_llm(streaming=False)
+    make_chat_llm(streaming=True)
+    if settings.cohere_api_key:
+        _cohere_reranker()
+
+
 def _make_retriever(
     user_client: Any,
     llm: Any,
@@ -246,11 +267,7 @@ def _make_retriever(
     # no-key fallback, then no reranker at all.
     compressor = None
     if settings.cohere_api_key:
-        compressor = _FailOpenRerank(inner=CohereRerank(
-            cohere_api_key=settings.cohere_api_key,
-            top_n=5,
-            model="rerank-v3.5",
-        ))
+        compressor = _cohere_reranker()
     else:
         try:
             from rerank.cross_encoder import LocalCrossEncoderReranker
@@ -259,7 +276,6 @@ def _make_retriever(
             logger.warning("local cross-encoder unavailable, no reranker | %s", exc)
 
     if compressor is not None:
-        from langchain_classic.retrievers import ContextualCompressionRetriever
         return ContextualCompressionRetriever(
             base_compressor=compressor,
             base_retriever=multi_retriever,
@@ -378,6 +394,7 @@ async def run_chat(
     - Persists the turn to the Supabase chat_memory table through the caller's
       own client (RLS-enforced ownership; ``user_id`` is stamped on each row).
     """
+    t0 = time.perf_counter()
     llm = make_chat_llm(streaming=False)
 
     intent = classify_intent(chat_input)
@@ -442,9 +459,10 @@ async def run_chat(
     messages.extend(chat_history)
     messages.append(HumanMessage(content=chat_input))
 
+    t_retrieved = time.perf_counter()
     answer = ""
     try:
-        response = llm.invoke(messages)
+        response = await asyncio.to_thread(llm.invoke, messages)
         answer = getattr(response, "content", "") or ""
     except Exception as exc:  # noqa: BLE001
         # Distinct from the zero-doc guard above: retrieval succeeded (docs
@@ -471,6 +489,10 @@ async def run_chat(
     except Exception as exc:  # noqa: BLE001
         logger.debug("memory persistence failed: %s", exc)
 
+    logger.info(
+        "timing | session=%s | retrieval+history=%.2fs | llm=%.2fs | total=%.2fs",
+        session_id, t_retrieved - t0, time.perf_counter() - t_retrieved, time.perf_counter() - t0,
+    )
     return {"answer": answer, "sources": sources}
 
 
