@@ -30,6 +30,14 @@ class Settings(BaseSettings):
     groq_api_key: str = ""
     cohere_api_key: str = ""
 
+    # Optional OpenAI-compatible embedding endpoint serving the same model as
+    # the local path (nomic-embed-text-v1.5). When set, BOTH queries and
+    # ingestion use it and torch is never loaded — lets the app run on a
+    # 512MB free host. Fireworks: https://api.fireworks.ai/inference/v1
+    # (or the Kaggle notebook in docs/operations/kaggle-embed-server.md).
+    remote_embed_url: str = ""
+    remote_embed_key: str = ""
+
     google_oauth_client_id: str = ""
     google_oauth_client_secret: str = ""
     google_refresh_token: str = ""
@@ -46,14 +54,19 @@ class Settings(BaseSettings):
     max_upload_bytes: int = 25 * 1024 * 1024
 
     embedding_model: str = "nomic-embed-text"
-    # nomic-embed-text-v1.5's native/max output is 768-dim (Matryoshka —
-    # truncatable down, never up); the documents.embedding column and both
-    # embedder paths (local HF, OpenAI fallback) are all pinned to this value
-    # via providers.get_embeddings() so the two paths stay interchangeable.
-    # Previously this was 1536 and unused anywhere — the local embedder was
-    # silently producing 768-dim vectors against a vector(1536) column, which
-    # fails every insert. See supabase/migrations/20260727000007.
+    # 768-dim nomic. BGE-M3 (1024d) swap is pre-staged in migration 0011
+    # and providers.py — apply migration + change providers constant + set
+    # this to 1024 + re-ingest as ONE operation. Changing one of these
+    # without the others silently breaks retrieval.
     embedding_dim: int = 768
+
+    # Nomic task prefixes ("search_query:" / "search_document:"). Adds
+    # ~5-10% recall — but ONLY when both sides use them. Existing docs
+    # ingested before this feature landed have NO doc-side prefix, so
+    # turning this on with a mixed corpus hurts recall on legacy docs
+    # (short/name-heavy queries like "wandi v muchira" miss entirely).
+    # Flip to True AFTER a full re-ingest, or with a fresh corpus.
+    use_embed_prefixes: bool = False
     # llama-3.3-70b-versatile was removed from Groq's lineup entirely
     # (confirmed live: every chat call was 404ing "model does not exist",
     # silently degrading to the hallucination-guard's canned no-answer

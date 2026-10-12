@@ -1,0 +1,7 @@
+# Local embedding model + CPU cross-encoder (torch). Only needed when
+# NOMIC_API_KEY is unset; the hosted deploy (Render) uses requirements.txt.
+-r requirements.txt
+langchain-huggingface==1.2.2
+sentence-transformers==4.0.0
+einops
+torch

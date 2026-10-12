@@ -172,16 +172,33 @@ export default function ANKRagDashboard() {
                 </div>
               ) : (
                 chat.sources.map((source) => (
-                  // Each card opens the retrieved document itself (the
-                  // backend only ever includes sources that have a real
-                  // Drive/storage url), not just a citation label.
+                  // Drive docs open their url; UI uploads have none, so fetch
+                  // their indexed text (needs the auth header) into a blob.
                   <a
                     key={source.id}
-                    href={source.url}
+                    href={source.url || "#"}
                     target="_blank"
                     rel="noreferrer"
                     title={source.title}
-                    onClick={() => chat.setActiveSource(source.id)}
+                    onClick={async (event) => {
+                      chat.setActiveSource(source.id);
+                      if (source.url) return;
+                      event.preventDefault();
+                      // Open synchronously so the popup blocker allows it.
+                      const win = window.open("", "_blank");
+                      try {
+                        const response = await auth.apiFetch(
+                          `/documents/view?file_id=${encodeURIComponent(source.id)}`,
+                          { headers: auth.authHeaders() }
+                        );
+                        if (!response.ok) throw new Error(`Could not open document (${response.status})`);
+                        const blob = new Blob([await response.text()], { type: "text/plain;charset=utf-8" });
+                        if (win) win.location.href = URL.createObjectURL(blob);
+                      } catch (err) {
+                        win?.close();
+                        banner.setError(err.message);
+                      }
+                    }}
                     className={`mb-2 block w-full rounded-lg border p-2.5 text-left transition-colors ${
                       chat.activeSource === source.id
                         ? "border-blue-300 bg-blue-50"

@@ -4,11 +4,43 @@ from typing import Any
 
 from config import settings
 
+# nomic-ai/nomic-embed-text-v1.5 (768d) — matches vector(768) column.
+# BGE-M3 (1024d) swap is pre-staged in migration 20260727000011 but must
+# ship ATOMICALLY: apply migration + change this constant + re-ingest all
+# docs in one go. Changing this constant alone (without the migration and
+# re-ingest) breaks retrieval — 1024-dim query vectors can't cosine-search
+# a vector(768) column.
 HUGGINGFACE_EMBEDDING_MODEL = "nomic-ai/nomic-embed-text-v1.5"
 OPENAI_EMBEDDING_MODEL = "text-embedding-3-small"
 OPENAI_CHAT_MODEL = "gpt-4.1-mini"
 
 _embeddings: Any = None
+
+
+
+def embed_prefixes() -> tuple[str, str]:
+    """Return (query_prefix, document_prefix) for the active local embedder.
+
+    Nomic-v1.5 was trained with ``search_query:`` / ``search_document:``
+    task prefixes. Gated behind ``settings.use_embed_prefixes`` — asymmetric
+    prefixes (query yes, docs no) hurt legacy corpora more than the
+    both-sides win. BGE-M3 and OpenAI want no prefixes ever.
+    """
+    if settings.openai_api_key:
+        return "", ""
+    if not settings.use_embed_prefixes:
+        return "", ""
+    m = HUGGINGFACE_EMBEDDING_MODEL
+    if "nomic-embed-text" in m:
+        return "search_query: ", "search_document: "
+    return "", ""
+
+
+def get_bulk_embeddings() -> Any:
+    """Embedder used for INGESTION. Same instance as the query path — when
+    ``REMOTE_EMBED_URL`` is set both go remote, so ingest and query vectors
+    always come from the same model."""
+    return get_embeddings()
 
 
 def get_embeddings() -> Any:
@@ -41,6 +73,22 @@ def get_embeddings() -> Any:
             model=model,
             openai_api_key=settings.openai_api_key,
             dimensions=settings.embedding_dim,
+        )
+        return _embeddings
+
+    if settings.remote_embed_url:
+        # OpenAI-compatible host serving the SAME model as the local path
+        # (Fireworks: https://api.fireworks.ai/inference/v1, or the Kaggle
+        # notebook) — raw text in, so embed_prefixes() behaves as for local
+        # and stored vectors stay valid. Keeps torch out of the process.
+        from langchain_openai import OpenAIEmbeddings
+
+        _embeddings = OpenAIEmbeddings(
+            model=HUGGINGFACE_EMBEDDING_MODEL,
+            openai_api_base=settings.remote_embed_url,
+            openai_api_key=settings.remote_embed_key or "unused",
+            dimensions=settings.embedding_dim,
+            check_embedding_ctx_length=False,
         )
         return _embeddings
 

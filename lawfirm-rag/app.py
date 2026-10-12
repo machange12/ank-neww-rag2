@@ -50,9 +50,15 @@ app.include_router(admin.router)
 
 @app.on_event("startup")
 async def startup_event() -> None:
+    import asyncio
+
     from ingest.scheduler import start_scheduler
+    from providers import get_embeddings
 
     start_scheduler()
+    # Load the embedder (~15s on CPU) in the background so the first chat
+    # after a cold start / Space wake-up doesn't pay for it.
+    asyncio.get_running_loop().run_in_executor(None, get_embeddings)
 
 
 @app.get("/healthz")

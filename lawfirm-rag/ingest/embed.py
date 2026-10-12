@@ -7,7 +7,7 @@ import tiktoken
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from config import settings
-from providers import get_embeddings
+from providers import embed_prefixes, get_bulk_embeddings
 
 # Bumped whenever the chunking strategy changes (splitter, length function,
 # size/overlap, separator set) in a way that changes chunk boundaries for
@@ -183,7 +183,8 @@ def enrich_chunk(chunk: TextChunk, file_title: str, total_pages: int = 0) -> str
     ``total_pages`` is reserved for future page-aware enrichment.
     """
     section = chunk.section_heading or "General"
-    return f"Document: {file_title}\nSection: {section}\n\n{chunk.text}"
+    _, doc_prefix = embed_prefixes()
+    return f"{doc_prefix}Document: {file_title}\nSection: {section}\n\n{chunk.text}"
 
 
 def embed_chunks(chunks: list[TextChunk], file_title: str = "") -> list[list[float]]:
@@ -195,5 +196,7 @@ def embed_chunks(chunks: list[TextChunk], file_title: str = "") -> list[list[flo
     never rewritten.
     """
     enriched_texts = [enrich_chunk(chunk, file_title) for chunk in chunks]
-    embedder = get_embeddings()
+    # Ingestion uses the bulk embedder — routes to a remote GPU endpoint
+    # (Kaggle notebook) when REMOTE_EMBED_URL is set, else the local model.
+    embedder = get_bulk_embeddings()
     return embedder.embed_documents(enriched_texts)

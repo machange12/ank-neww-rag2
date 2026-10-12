@@ -9,7 +9,7 @@ from typing import Any, List
 from langchain_cohere import CohereRerank
 from langchain_community.vectorstores import SupabaseVectorStore
 from langchain_core.retrievers import BaseRetriever
-from langchain_core.documents import Document
+from langchain_core.documents import BaseDocumentCompressor, Document
 from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_classic.retrievers.multi_query import MultiQueryRetriever
 
@@ -58,17 +58,42 @@ INTENT_RETRIEVE_K = {
     "out_of_scope": 0,
 }
 
-INTENT_CLASSIFIER_PROMPT = (
-    "Classify this legal query into exactly one category. "
-    'Reply with JSON only, no other text: {{"intent": "<category>", "retrieve_k": <int>}}. '
-    "Query: {query}"
-)
+# Intents where MultiQueryRetriever pays for itself. Point-lookup queries
+# (factual, procedural) rarely gain recall from LLM-generated rewrites and
+# eat 2-4s per query on the extra LLM call + 3-4× retrieval RPCs.
+MULTI_QUERY_INTENTS = {"comparative", "summarization"}
 
-# Keyword hints → doc_type. Matched case-insensitively; first hit wins. No LLM call.
-DOC_TYPE_HINT_KEYWORDS: dict[str, tuple[str, ...]] = {
-    "judgment": ("judgment", "ruling", "decision", "case", "eklr"),
-    "contract": ("contract", "agreement", "clause", "nda", "lease"),
-    "statute": ("act", "statute", "regulation", "section", "cap."),
+# Keyword rules → intent (English + Swahili). Whole-word, case-insensitive,
+# first hit wins, default "factual". Replaced an LLM classifier whose prompt
+# never listed the categories: it invented labels ("case_law") so every query
+# fell to factual, its made-up retrieve_k (5) starved the reranker, and it
+# cost ~3s/query. out_of_scope is not keyword-detectable; the answer prompt's
+# rule 2 handles small talk.
+# ponytail: keyword heuristic, misses paraphrases ("how do X and Y stack up").
+# Upgrade to a small embedding classifier once a golden set exists to score it.
+INTENT_PATTERNS: dict[str, re.Pattern[str]] = {
+    "comparative": re.compile(
+        r"\b(compare[sd]?|comparison|differences?|differ|contrast|distinguish\w*|similarit\w+"
+        r"|linganisha|tofauti)\b", re.I),
+    "summarization": re.compile(
+        r"\b(summar\w+|overview|outline|key points|main points|list all|all (the )?cases"
+        r"|muhtasari|fupisha)\b", re.I),
+    "procedural": re.compile(
+        r"\b(how (do|can|to)|procedure|process for|steps?|requirements? for|apply for|file an?"
+        r"|jinsi ya|hatua|utaratibu)\b", re.I),
+}
+
+# Keyword hints → doc_type. Whole-word, case-insensitive; first hit wins.
+# Substring matching used to send "summarise the facts" ("act") to the
+# statute filter.
+DOC_TYPE_HINT_PATTERNS: dict[str, re.Pattern[str]] = {
+    # "judgement" is the British spelling — Kenyan legal writing uses both.
+    # "estate", "petition", "kehc"/"kesc"/"keca" (High/Supreme/Appeal court
+    # neutral citations) added because succession queries never say "judgment".
+    "judgment": re.compile(
+        r"\b(judge?ments?|rulings?|decisions?|case|eklr|estate|petition|kehc|kesc|keca|vs?\.?)(?!\w)", re.I),
+    "contract": re.compile(r"\b(contracts?|agreements?|clauses?|nda|lease)\b", re.I),
+    "statute": re.compile(r"\b(act|statutes?|regulations?|section|cap\.)(?!\w)", re.I),
 }
 
 
@@ -76,50 +101,23 @@ def _doc_type_hint_from_query(query: str) -> str | None:
     """
     Cheap, LLM-free doc_type hint for a query.
 
-    Returns "judgment", "contract", "statute" or None based on simple keyword
-    matching. Used to restrict retrieval to a single document type.
+    Returns "judgment", "contract", "statute" or None. A hint, not a hard
+    filter — HybridRetriever retries unfiltered when the filtered pass is empty.
     """
-    lowered = query.lower()
-    for doc_type, keywords in DOC_TYPE_HINT_KEYWORDS.items():
-        if any(keyword in lowered for keyword in keywords):
+    for doc_type, pattern in DOC_TYPE_HINT_PATTERNS.items():
+        if pattern.search(query):
             return doc_type
     return None
 
 
-def classify_intent(query: str, llm: Any) -> dict[str, Any]:
-    """
-    Classify a legal query into one of five intents and pick a retrieval depth.
-
-    Uses one cheap LLM call that is instructed to reply with JSON only. The
-    response is parsed defensively — any parse failure degrades safely to
-    factual/8 so the chat path never breaks on garbage output.
-
-    Also derives a ``doc_type_hint`` from the query via keyword matching (no
-    extra LLM call) so retrieval can be scoped to a single document type.
-    """
-    doc_type_hint = _doc_type_hint_from_query(query)
-    try:
-        response = llm.invoke(INTENT_CLASSIFIER_PROMPT.format(query=query))
-        content = getattr(response, "content", "") or ""
-        if not isinstance(content, str):
-            content = str(content)
-
-        match = re.search(r"\{.*\}", content, re.DOTALL)
-        parsed = json.loads(match.group(0)) if match else json.loads(content)
-
-        intent = parsed.get("intent", "factual")
-        if intent not in INTENT_RETRIEVE_K:
-            intent = "factual"
-        try:
-            retrieve_k = int(parsed.get("retrieve_k", INTENT_RETRIEVE_K[intent]))
-        except (TypeError, ValueError):
-            retrieve_k = INTENT_RETRIEVE_K[intent]
-        if retrieve_k <= 0 or retrieve_k > 50:
-            retrieve_k = INTENT_RETRIEVE_K[intent]
-        return {"intent": intent, "retrieve_k": retrieve_k, "doc_type_hint": doc_type_hint}
-    except Exception as exc:  # noqa: BLE001
-        logger.debug("intent classification failed, defaulting to factual/8: %s", exc)
-        return {"intent": "factual", "retrieve_k": 8, "doc_type_hint": doc_type_hint}
+def classify_intent(query: str) -> dict[str, Any]:
+    """Pick intent + retrieval depth + doc_type hint from keyword rules. No LLM call."""
+    intent = next((name for name, p in INTENT_PATTERNS.items() if p.search(query)), "factual")
+    return {
+        "intent": intent,
+        "retrieve_k": INTENT_RETRIEVE_K[intent],
+        "doc_type_hint": _doc_type_hint_from_query(query),
+    }
 
 
 def _make_vector_store(user_client: Any) -> SupabaseVectorStore:
@@ -149,21 +147,24 @@ class HybridRetriever(BaseRetriever):
 
     def _get_relevant_documents(self, query: str) -> List[Document]:
         top_k = self.k if self.k is not None else settings.retrieve_top_k
-        try:
-            docs = hybrid_search(
-                self.user_client,
-                query,
-                match_count=top_k,
-                doc_type_filter=self.doc_type_filter,
-            )
-        except Exception:
-            docs = []
-        if docs:
-            self.last_path = "hybrid"
-            return docs
-        # Fallback to vector similarity. When a doc_type filter is set, pass it
-        # as a metadata filter so only that document type is matched.
-        # hybrid_search() already logs a warning on outright RPC failure; this
+        # doc_type_filter is a keyword guess; if it matches nothing (e.g.
+        # "statute" with no statutes ingested) retry unfiltered rather than
+        # returning zero docs.
+        for doc_type_filter in dict.fromkeys([self.doc_type_filter, None]):
+            try:
+                docs = hybrid_search(
+                    self.user_client,
+                    query,
+                    match_count=top_k,
+                    doc_type_filter=doc_type_filter,
+                )
+            except Exception:
+                docs = []
+            if docs:
+                self.last_path = "hybrid" if doc_type_filter == self.doc_type_filter else "hybrid_unfiltered"
+                return docs
+        # Fallback to vector similarity, unfiltered — both hybrid passes
+        # (filtered + unfiltered) already came back empty. hybrid_search() already logs a warning on outright RPC failure; this
         # covers the equally-relevant "RPC succeeded but returned zero rows"
         # case, which was previously invisible — no log at all.
         logger.warning(
@@ -174,12 +175,34 @@ class HybridRetriever(BaseRetriever):
             self.doc_type_filter,
         )
         self.last_path = "vector_fallback"
-        filter_kwargs = {"filter": {"doc_type": self.doc_type_filter}} if self.doc_type_filter else {}
-        return self.store.similarity_search(query, k=top_k, **filter_kwargs)
+        return self.store.similarity_search(query, k=top_k)
+
+
+class _FailOpenRerank(BaseDocumentCompressor):
+    """Wraps a hosted reranker so an API error (rate limit, outage) degrades
+    to the hybrid RRF order instead of failing retrieval — which would
+    otherwise surface as the zero-doc NO_RESULT_RESPONSE."""
+
+    inner: Any
+    top_n: int = 5
+
+    class Config:
+        arbitrary_types_allowed = True
+
+    def compress_documents(self, documents, query, callbacks=None):
+        try:
+            return self.inner.compress_documents(documents, query, callbacks=callbacks)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("reranker failed, using unreranked RRF order | %s", exc)
+            return list(documents)[: self.top_n]
 
 
 def _make_retriever(
-    user_client: Any, llm: Any, k: int | None = None, doc_type_filter: str | None = None
+    user_client: Any,
+    llm: Any,
+    k: int | None = None,
+    doc_type_filter: str | None = None,
+    use_multi_query: bool = True,
 ) -> tuple[Any, "HybridRetriever"]:
     """Build the retrieval chain; ``k`` overrides settings.retrieve_top_k for this call.
 
@@ -204,20 +227,38 @@ def _make_retriever(
         doc_type_filter=doc_type_filter,
     )
 
-    # Wrap with multi-query rewriting to broaden retrievals
-    multi_retriever = MultiQueryRetriever.from_llm(
-        retriever=hybrid_retriever,
-        llm=llm,
-        include_original=True,
-    )
+    # Wrap with multi-query rewriting to broaden retrievals — but only when
+    # the intent asked for it. MultiQuery = 1 LLM rewrite call + 3-4× the
+    # retrieval RPCs (~2-4s tax per query). Point/direct lookups (factual,
+    # procedural) don't benefit; comparative/summarization queries do.
+    if use_multi_query:
+        multi_retriever = MultiQueryRetriever.from_llm(
+            retriever=hybrid_retriever,
+            llm=llm,
+            include_original=True,
+        )
+    else:
+        multi_retriever = hybrid_retriever
 
-    # Optionally apply Cohere reranking as a contextual compressor
+    # Reranker: prefer Cohere's hosted API (~300ms) when a key is set —
+    # the local CPU cross-encoder measured ~3.4s/pair (25 pairs = 82s).
+    # rerank-v3.5 is multilingual (English + Swahili). Local CE is the
+    # no-key fallback, then no reranker at all.
+    compressor = None
     if settings.cohere_api_key:
-        compressor = CohereRerank(
+        compressor = _FailOpenRerank(inner=CohereRerank(
             cohere_api_key=settings.cohere_api_key,
             top_n=5,
-            model="rerank-english-v3.0",
-        )
+            model="rerank-v3.5",
+        ))
+    else:
+        try:
+            from rerank.cross_encoder import LocalCrossEncoderReranker
+            compressor = LocalCrossEncoderReranker(top_n=5)
+        except Exception as exc:
+            logger.warning("local cross-encoder unavailable, no reranker | %s", exc)
+
+    if compressor is not None:
         from langchain_classic.retrievers import ContextualCompressionRetriever
         return ContextualCompressionRetriever(
             base_compressor=compressor,
@@ -247,22 +288,32 @@ def _build_context_string(docs: list[Any]) -> str:
 
 
 def _sources_from_docs(docs: list[Any]) -> list[dict[str, Any]]:
-    """Build source dicts with title/url/file_id plus chunk-level citation fields."""
+    """Build source dicts with title/url/file_id plus chunk-level citation fields.
+
+    Dedupe by (file_id, url, title) — whichever is available. Previously
+    required a non-empty ``url`` to include a doc at all, which silently
+    hid every uploaded-file source (UI-upload path stores no url, only
+    Drive-ingested docs have one) even when the answer cited it.
+    """
     sources: list[dict[str, Any]] = []
+    seen: set[str] = set()
     for doc in docs:
         meta = getattr(doc, "metadata", {}) or {}
         url = meta.get("url") or meta.get("file_url", "")
         title = meta.get("file_title") or meta.get("title") or "Unknown document"
         file_id = meta.get("file_id", "")
-        if url and not any(source["url"] == url for source in sources):
-            sources.append({
-                "title": title,
-                "url": url,
-                "file_id": file_id,
-                "section_heading": meta.get("section_heading", "") or "",
-                "chunk_index": meta.get("chunk_index", 0) or 0,
-                "page_number": meta.get("page_number", 0) or 0,
-            })
+        key = file_id or url or title
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        sources.append({
+            "title": title,
+            "url": url,
+            "file_id": file_id,
+            "section_heading": meta.get("section_heading", "") or "",
+            "chunk_index": meta.get("chunk_index", 0) or 0,
+            "page_number": meta.get("page_number", 0) or 0,
+        })
     return sources
 
 
@@ -329,13 +380,17 @@ async def run_chat(
     """
     llm = make_chat_llm(streaming=False)
 
-    intent = classify_intent(chat_input, llm)
+    intent = classify_intent(chat_input)
     if intent["intent"] == "out_of_scope":
         logger.info("out_of_scope query | session=%s | query=%r", session_id, chat_input)
         return {"answer": OUT_OF_SCOPE_RESPONSE, "sources": []}
 
     retriever, hybrid_retriever = _make_retriever(
-        user_client, llm, k=intent["retrieve_k"], doc_type_filter=intent.get("doc_type_hint")
+        user_client,
+        llm,
+        k=intent["retrieve_k"],
+        doc_type_filter=intent.get("doc_type_hint"),
+        use_multi_query=intent["intent"] in MULTI_QUERY_INTENTS,
     )
     docs: list[Any] = []
     try:
@@ -440,7 +495,7 @@ async def stream_chat(
     """
     llm = make_chat_llm(streaming=True)
 
-    intent = classify_intent(chat_input, llm)
+    intent = classify_intent(chat_input)
     if intent["intent"] == "out_of_scope":
         logger.info("out_of_scope query | session=%s | query=%r", session_id, chat_input)
         yield OUT_OF_SCOPE_RESPONSE
@@ -448,7 +503,11 @@ async def stream_chat(
         return
 
     retriever, hybrid_retriever = _make_retriever(
-        user_client, llm, k=intent["retrieve_k"], doc_type_filter=intent.get("doc_type_hint")
+        user_client,
+        llm,
+        k=intent["retrieve_k"],
+        doc_type_filter=intent.get("doc_type_hint"),
+        use_multi_query=intent["intent"] in MULTI_QUERY_INTENTS,
     )
     docs: list[Any] = []
     sources: list[dict[str, Any]] = []

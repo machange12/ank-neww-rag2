@@ -6,7 +6,7 @@ from typing import Any, List
 from langchain_core.documents import Document
 from config import settings
 from postgrest_utils import response_data
-from providers import get_embeddings
+from providers import embed_prefixes, get_embeddings
 
 logger = logging.getLogger(__name__)
 
@@ -29,11 +29,15 @@ def hybrid_search(
     """
     try:
         embedder = get_embeddings()
-        # Prefer embed_query when available
+        # Model-specific task prefix (nomic wants "search_query: "; BGE-M3
+        # and OpenAI want none). Must stay in sync with ingest/embed.py's
+        # enrich_chunk — mismatched prefixes silently tank recall.
+        query_prefix, _ = embed_prefixes()
+        prefixed_query = f"{query_prefix}{query_text}"
         try:
-            query_embedding = embedder.embed_query(query_text)
+            query_embedding = embedder.embed_query(prefixed_query)
         except Exception:
-            query_embedding = embedder.embed_documents([query_text])[0]
+            query_embedding = embedder.embed_documents([prefixed_query])[0]
 
         # Call the Supabase RPC. The RPC is expected to return rows with
         # at least `content` and `metadata` columns to construct Documents.

@@ -7,7 +7,7 @@ import tempfile
 from typing import Any
 
 from fastapi import APIRouter, File, Form, Header, HTTPException, Request, UploadFile
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from pydantic import BaseModel
 
 from audit import events as audit_events
@@ -199,6 +199,32 @@ async def documents_list(
     ctx_rbac_from_token(token)
     user_client = make_user_client(token)
     return JSONResponse({"documents": list_documents(user_client)})
+
+
+@router.get("/documents/view", response_class=PlainTextResponse)
+async def document_view(
+    file_id: str,
+    authorization: str | None = Header(default=None),
+) -> PlainTextResponse:
+    """Indexed text of one document, for source links with no Drive url.
+
+    UI uploads store only chunks (no original file), so this reassembles them.
+    Reads through the caller's client, so RLS decides visibility.
+    """
+    token = token_from_header(authorization)
+    ctx_rbac_from_token(token)
+    rows = (
+        make_user_client(token).table("documents")
+        .select("content, metadata")
+        .eq("metadata->>file_id", file_id)
+        .limit(2000)
+        .execute()
+    ).data or []
+    if not rows:
+        raise HTTPException(status_code=404, detail="Document not found")
+    rows.sort(key=lambda r: (r.get("metadata") or {}).get("chunk_index", 0))
+    title = (rows[0].get("metadata") or {}).get("file_title") or file_id
+    return PlainTextResponse(title + "\n\n" + "\n\n".join(r["content"] for r in rows))
 
 
 @router.get("/documents/intelligence")
