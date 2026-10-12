@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import math
 import time
+from functools import lru_cache
 from typing import Any
+
+import httpx
 
 from jose import JWTError, jwt
 
@@ -11,6 +14,14 @@ from config import settings
 
 class AuthError(Exception):
     pass
+
+
+@lru_cache(maxsize=4)
+def _jwks_key(kid: str) -> dict[str, Any] | None:
+    # Supabase's asymmetric signing keys (ES256). Cached per kid; a new kid
+    # (key rotation) misses the cache and refetches.
+    keys = httpx.get(f"{settings.supabase_url}/auth/v1/.well-known/jwks.json", timeout=10).json().get("keys", [])
+    return next((k for k in keys if k.get("kid") == kid), None)
 
 
 def verify_jwt(token: str) -> dict[str, Any]:
@@ -25,8 +36,21 @@ def verify_jwt(token: str) -> dict[str, Any]:
     if len(parts) != 3:
         raise AuthError("UNAUTHORIZED: Malformed JWT")
 
+    try:
+        header = jwt.get_unverified_header(token)
+    except JWTError as e:
+        raise AuthError(f"UNAUTHORIZED: {e}") from e
     secret = settings.supabase_jwt_secret
-    if not secret:
+    if header.get("alg") in ("ES256", "RS256"):
+        key = _jwks_key(header.get("kid") or "")
+        if key is None:
+            _jwks_key.cache_clear()
+            raise AuthError("UNAUTHORIZED: unknown signing key")
+        try:
+            payload = jwt.decode(token, key, algorithms=[header["alg"]], options={"verify_aud": False})
+        except JWTError as e:
+            raise AuthError(f"UNAUTHORIZED: {e}") from e
+    elif not secret:
         if settings.environment == "production":
             # Never decode unverified claims in production — a missing
             # secret must fail closed, not silently accept forged tokens.

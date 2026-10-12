@@ -188,15 +188,21 @@ class _FailOpenRerank(BaseDocumentCompressor):
 
     inner: Any
     top_n: int = 5
+    # After a failure, skip the API for a while so an outage costs one
+    # timeout, not one per question.
+    skip_until: float = 0.0
 
     class Config:
         arbitrary_types_allowed = True
 
     def compress_documents(self, documents, query, callbacks=None):
+        if time.monotonic() < self.skip_until:
+            return list(documents)[: self.top_n]
         try:
             return self.inner.compress_documents(documents, query, callbacks=callbacks)
         except Exception as exc:  # noqa: BLE001
-            logger.warning("reranker failed, using unreranked RRF order | %s", exc)
+            self.skip_until = time.monotonic() + 120
+            logger.warning("reranker failed, using unreranked RRF order for 120s | %s", exc)
             return list(documents)[: self.top_n]
 
 
