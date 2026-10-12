@@ -204,10 +204,10 @@ class _FailOpenRerank(BaseDocumentCompressor):
 def _cohere_reranker() -> "_FailOpenRerank":
     # Cached: CohereRerank() costs ~1s of CPU to build (client/SSL setup).
     # timeout: the SDK default is 300s — a hung rerank call stalled whole
-    # chats; 10s then fail-open to RRF order.
+    # chats; 4s (normal rerank <1s) then fail-open to RRF order.
     import cohere
     return _FailOpenRerank(inner=CohereRerank(
-        client=cohere.ClientV2(api_key=settings.cohere_api_key, timeout=10),
+        client=cohere.ClientV2(api_key=settings.cohere_api_key, timeout=4),
         cohere_api_key=settings.cohere_api_key,
         top_n=5,
         model="rerank-v3.5",
