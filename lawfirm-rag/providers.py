@@ -90,6 +90,8 @@ def get_embeddings() -> Any:
             openai_api_key=settings.remote_embed_key or "unused",
             dimensions=settings.embedding_dim,
             check_embedding_ctx_length=False,
+            timeout=15,  # SDK default is 600s; a hung call stalled whole chats
+            max_retries=2,
         )
         return _embeddings
 
@@ -126,6 +128,7 @@ def make_chat_llm(streaming: bool = False) -> Any:
             max_tokens=settings.chat_max_tokens,
             groq_api_key=settings.groq_api_key,
             streaming=streaming,
+            timeout=60,
         )
 
     from langchain_openai import ChatOpenAI
