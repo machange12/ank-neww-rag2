@@ -82,16 +82,37 @@ def get_embeddings() -> Any:
         # (Fireworks: https://api.fireworks.ai/inference/v1, or the Kaggle
         # notebook) — raw text in, so embed_prefixes() behaves as for local
         # and stored vectors stay valid. Keeps torch out of the process.
+        import time
+
+        import openai
         from langchain_openai import OpenAIEmbeddings
 
-        _embeddings = OpenAIEmbeddings(
+        class _QuickRetryEmbeddings(OpenAIEmbeddings):
+            # Fireworks serverless 503s often and sends Retry-After: 5, which
+            # the SDK obeys — +5s per hiccup. A retry 0.3s later almost always
+            # succeeds, so retry ourselves with short pauses instead.
+            def _retry(self, fn, *args):
+                for pause in (0.3, 1.0, 3.0):
+                    try:
+                        return fn(*args)
+                    except (openai.InternalServerError, openai.APIConnectionError, openai.APITimeoutError):
+                        time.sleep(pause)
+                return fn(*args)
+
+            def embed_query(self, text):
+                return self._retry(super().embed_query, text)
+
+            def embed_documents(self, texts, chunk_size=None, **kwargs):
+                return self._retry(lambda t: super(_QuickRetryEmbeddings, self).embed_documents(t, chunk_size, **kwargs), texts)
+
+        _embeddings = _QuickRetryEmbeddings(
             model=HUGGINGFACE_EMBEDDING_MODEL,
             openai_api_base=settings.remote_embed_url,
             openai_api_key=settings.remote_embed_key or "unused",
             dimensions=settings.embedding_dim,
             check_embedding_ctx_length=False,
             timeout=15,  # SDK default is 600s; a hung call stalled whole chats
-            max_retries=2,
+            max_retries=0,  # retries handled by _QuickRetryEmbeddings
         )
         return _embeddings
 
@@ -111,6 +132,9 @@ def make_embeddings() -> Any:
 
 # Cached: building the client costs ~1.3s of CPU (httpx/SSL setup) — paid
 # per request before, which is tens of seconds on Render's shared free CPU.
+GROQ_FALLBACK_MODELS = ["openai/gpt-oss-20b", "qwen/qwen3.8-27b"]
+
+
 @lru_cache(maxsize=2)
 def make_chat_llm(streaming: bool = False) -> Any:
     """
@@ -122,14 +146,29 @@ def make_chat_llm(streaming: bool = False) -> Any:
     if settings.groq_api_key:
         from langchain_groq import ChatGroq
 
-        return ChatGroq(
-            model=settings.chat_model,
-            temperature=0,
-            max_tokens=settings.chat_max_tokens,
-            groq_api_key=settings.groq_api_key,
-            streaming=streaming,
-            timeout=60,
-        )
+        def groq(model: str, max_retries: int) -> Any:
+            return ChatGroq(
+                model=model,
+                temperature=0,
+                # qwen also caps *output* tokens/min at 1000 and rejects a
+                # larger max_tokens outright.
+                max_tokens=min(settings.chat_max_tokens, 1000) if "qwen" in model else settings.chat_max_tokens,
+                groq_api_key=settings.groq_api_key,
+                streaming=streaming,
+                timeout=60,
+                max_retries=max_retries,
+                # gpt-oss is a reasoning model; "low" cuts hidden reasoning
+                # tokens (latency + the free tier's tokens/min budget).
+                **({"reasoning_effort": "low"} if "gpt-oss" in model else {}),
+            )
+
+        # Groq's free tier caps each model at 8k tokens/min, but per model —
+        # so on a 429 switch models immediately instead of waiting for the
+        # window to reset. If all are busy, retry the primary (Groq's
+        # Retry-After is usually ~1s once older requests age out).
+        chain = list(dict.fromkeys([settings.chat_model, *GROQ_FALLBACK_MODELS]))
+        primary, *rest = [groq(m, 0) for m in chain] + [groq(settings.chat_model, 3)]
+        return primary.with_fallbacks(rest)
 
     from langchain_openai import ChatOpenAI
 

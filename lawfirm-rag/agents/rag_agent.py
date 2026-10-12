@@ -421,7 +421,8 @@ async def run_chat(
     )
     docs: list[Any] = []
     try:
-        docs = await asyncio.to_thread(retriever.invoke, chat_input)
+        # ainvoke: MultiQuery runs its rewritten queries concurrently.
+        docs = await retriever.ainvoke(chat_input)
         if isinstance(docs, list):
             _log_retrieval(
                 session_id=session_id,
@@ -545,7 +546,8 @@ async def stream_chat(
     sources: list[dict[str, Any]] = []
 
     try:
-        docs = await asyncio.to_thread(retriever.invoke, chat_input)
+        # ainvoke: MultiQuery runs its rewritten queries concurrently.
+        docs = await retriever.ainvoke(chat_input)
         if isinstance(docs, list):
             _log_retrieval(
                 session_id=session_id,
