@@ -30,13 +30,16 @@ class Settings(BaseSettings):
     groq_api_key: str = ""
     cohere_api_key: str = ""
 
-    # Optional OpenAI-compatible embedding endpoint serving the same model as
-    # the local path (nomic-embed-text-v1.5). When set, BOTH queries and
-    # ingestion use it and torch is never loaded — lets the app run on a
-    # 512MB free host. Fireworks: https://api.fireworks.ai/inference/v1
-    # (or the Kaggle notebook in docs/operations/kaggle-embed-server.md).
+    # Optional OpenAI-compatible embedding endpoint. When set, BOTH queries
+    # and ingestion use it and torch is never loaded — lets the app run on a
+    # 512MB free host. Changing the model means re-embedding every chunk
+    # (scripts/reembed_all.py). Gemini (current):
+    # https://generativelanguage.googleapis.com/v1beta/openai/ +
+    # gemini-embedding-001. Fireworks serves the local nomic model but
+    # measured median 5s / max 49s per query (2026-10-13).
     remote_embed_url: str = ""
     remote_embed_key: str = ""
+    remote_embed_model: str = "nomic-ai/nomic-embed-text-v1.5"
 
     google_oauth_client_id: str = ""
     google_oauth_client_secret: str = ""

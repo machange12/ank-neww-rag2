@@ -78,24 +78,23 @@ def get_embeddings() -> Any:
         return _embeddings
 
     if settings.remote_embed_url:
-        # OpenAI-compatible host serving the SAME model as the local path
-        # (Fireworks: https://api.fireworks.ai/inference/v1, or the Kaggle
-        # notebook) — raw text in, so embed_prefixes() behaves as for local
-        # and stored vectors stay valid. Keeps torch out of the process.
+        # OpenAI-compatible hosted embedder (see config.remote_embed_*).
+        # Keeps torch out of the process. Stored vectors are only valid for
+        # the model that made them — re-embed after switching models.
         import time
 
         import openai
         from langchain_openai import OpenAIEmbeddings
 
         class _QuickRetryEmbeddings(OpenAIEmbeddings):
-            # Fireworks serverless 503s often and sends Retry-After: 5, which
-            # the SDK obeys — +5s per hiccup. A retry 0.3s later almost always
-            # succeeds, so retry ourselves with short pauses instead.
+            # Hosted embedders hiccup (Fireworks 503s with Retry-After: 5,
+            # which the SDK obeys — +5s each). A retry 0.3s later almost
+            # always succeeds, so retry ourselves with short pauses instead.
             def _retry(self, fn, *args):
                 for pause in (0.3, 1.0, 3.0):
                     try:
                         return fn(*args)
-                    except (openai.InternalServerError, openai.APIConnectionError, openai.APITimeoutError):
+                    except (openai.InternalServerError, openai.APIConnectionError, openai.APITimeoutError, openai.RateLimitError):
                         time.sleep(pause)
                 return fn(*args)
 
@@ -106,12 +105,15 @@ def get_embeddings() -> Any:
                 return self._retry(lambda t: super(_QuickRetryEmbeddings, self).embed_documents(t, chunk_size, **kwargs), texts)
 
         _embeddings = _QuickRetryEmbeddings(
-            model=HUGGINGFACE_EMBEDDING_MODEL,
+            model=settings.remote_embed_model,
             openai_api_base=settings.remote_embed_url,
             openai_api_key=settings.remote_embed_key or "unused",
             dimensions=settings.embedding_dim,
             check_embedding_ctx_length=False,
-            timeout=15,  # SDK default is 600s; a hung call stalled whole chats
+            chunk_size=100,  # Gemini caps inputs per batch request
+            # Normal call ~0.4s; cut stalls at 4s and let _QuickRetryEmbeddings
+            # retry (SDK default is 600s).
+            timeout=4,
             max_retries=0,  # retries handled by _QuickRetryEmbeddings
         )
         return _embeddings
