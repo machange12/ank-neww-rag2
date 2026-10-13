@@ -330,6 +330,8 @@ _GENERIC_TITLE_WORDS = {
     "court", "high", "civil", "supreme", "letter", "client", "legal", "doc", "pdf", "docx", "kehc", "kesc", "keca",
 }
 _KEEP_LOWER = {"v", "of", "the", "and", "in", "re"}
+# Capitalised words that are not names of a specific document or party.
+_COMMON_CAPS = {"court", "judge", "high", "appeal", "supreme", "republic", "kenya", "kenyan", "act", "section", "article", "constitution", "the"}
 
 
 def _pretty_title(file_title: str) -> str:
@@ -340,7 +342,7 @@ def _pretty_title(file_title: str) -> str:
     m = re.match(r"(\d{4})-([a-z]+)-(\d+)-(.+)", name)
     if m:
         cite, name = f" [{m[1]} {m[2].upper()} {m[3]}]", m[4]
-    name = re.sub(r"^(doc)?\d+_", "", name)
+    name = re.sub(r"^(synth_|doc)?\d+_", "", name)
     words = [w for w in re.split(r"[-_\s]+", name) if w and not re.fullmatch(r"\(\d+\)", w)]
     words = [w if w.lower() in _KEEP_LOWER else (w.upper() if len(w) <= 3 else w.capitalize()) for w in words]
     return " ".join(words) + cite
@@ -358,12 +360,19 @@ def _clarifying_question(query: str, docs: list[Any]) -> str | None:
     # stronger prompt once a labelled ambiguity set exists.
     if not _DEFINITE_REF.search(query):
         return None
+    # A capitalised name the user typed ("Bahari Shipping") that matches no
+    # candidate means they asked about a specific document we may not hold:
+    # let the answer step say so instead of offering unrelated documents.
+    names = {w.lower() for w in re.findall(r"(?<!^)(?<![.?!]\s)\b[A-Z][a-z]{2,}\b", query)} - _COMMON_CAPS
     candidates: dict[str, None] = {}
     for doc in docs:
         title = (getattr(doc, "metadata", {}) or {}).get("file_title") or ""
         if title:
             candidates.setdefault(_pretty_title(title), None)
     if len(candidates) < 2:
+        return None
+    title_text = " ".join(candidates).lower()
+    if names and not any(n in title_text for n in names):
         return None
     query_words = set(re.findall(r"[a-z0-9]+", query.lower()))
     for title in candidates:
@@ -556,7 +565,9 @@ async def run_chat(
         user_client,
         llm,
         k=intent["retrieve_k"],
-        doc_type_filter=intent.get("doc_type_hint"),
+        # No doc-type filter: labels come from an LLM classifier that can
+        # fail (stored as "unknown"), and a filter then hides the right
+        # document. Unfiltered hybrid scored 100% hit@1 on the golden set.
         use_multi_query=intent["intent"] in MULTI_QUERY_INTENTS,
     )
     docs: list[Any] = []
@@ -672,7 +683,9 @@ async def stream_chat(
         user_client,
         llm,
         k=intent["retrieve_k"],
-        doc_type_filter=intent.get("doc_type_hint"),
+        # No doc-type filter: labels come from an LLM classifier that can
+        # fail (stored as "unknown"), and a filter then hides the right
+        # document. Unfiltered hybrid scored 100% hit@1 on the golden set.
         use_multi_query=intent["intent"] in MULTI_QUERY_INTENTS,
     )
     docs: list[Any] = []

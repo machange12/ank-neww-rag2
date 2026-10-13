@@ -1,0 +1,541 @@
+[
+ {
+  "type": "lookup",
+  "file": "synth_01_estate_of_mwangi.txt",
+  "query": "When did Wanjiru Kamau Mwangi die?",
+  "answer": "14 March 2019",
+  "snippet": "died intestate on 14 March 2019"
+ },
+ {
+  "type": "paraphrase",
+  "file": "synth_01_estate_of_mwangi.txt",
+  "query": "In the Mwangi succession, does the widow get the Bahati land outright or only for her lifetime?",
+  "answer": "Life interest; then to the four children equally",
+  "snippet": "shall hold parcel Nakuru/Bahati/1123 as a life interest"
+ },
+ {
+  "type": "lookup",
+  "file": "synth_01_estate_of_mwangi.txt",
+  "query": "Why was Lucy Wairimu Njoroge's claim to part of the Solai land rejected?",
+  "answer": "No witnessed agreement, no survey, and no Land Control Board consent",
+  "snippet": "consent of the Land Control Board"
+ },
+ {
+  "type": "numeric",
+  "file": "synth_01_estate_of_mwangi.txt",
+  "query": "How much must the Mwangi estate refund to the interested party who paid for land?",
+  "answer": "KES 450,000 within 90 days, without interest",
+  "snippet": "refund her KES 450,000 within 90 days"
+ },
+ {
+  "type": "reasoning",
+  "file": "synth_01_estate_of_mwangi.txt",
+  "query": "Was the widow in the Mwangi estate found to have intermeddled by withdrawing money before the grant?",
+  "answer": "No; KES 482,000 funeral/hospital costs allowed, KES 118,000 school fees treated as an advancement to Mary",
+  "snippet": "declines to find that the Petitioner intermeddled"
+ },
+ {
+  "type": "lookup",
+  "file": "synth_01_estate_of_mwangi.txt",
+  "query": "Who gets the 2,400 dairy cooperative shares in the Mwangi estate?",
+  "answer": "Grace Nyambura Mwangi absolutely",
+  "snippet": "shall vest in Grace Nyambura Mwangi absolutely"
+ },
+ {
+  "type": "reasoning",
+  "file": "synth_01_estate_of_mwangi.txt",
+  "query": "Does Peter Kariuki Mwangi get extra land because he built a borehole and zero-grazing unit on the Solai parcel?",
+  "answer": "No; the developed acre counts towards, not in addition to, his equal share",
+  "snippet": "counted towards, and not added to, his entitlement"
+ },
+ {
+  "type": "lookup",
+  "file": "synth_01_estate_of_mwangi.txt",
+  "query": "What was the costs order in the Mwangi succession judgment?",
+  "answer": "Each party bears its own costs (family dispute)",
+  "snippet": "Each party shall bear its own costs, this being a family dispute"
+ },
+ {
+  "type": "numeric",
+  "file": "synth_02_otieno_v_lakeside_logistics.txt",
+  "query": "What was Joseph Otieno's gross monthly salary at Lakeside Logistics?",
+  "answer": "KES 145,000",
+  "snippet": "gross monthly salary was KES 145,000"
+ },
+ {
+  "type": "reasoning",
+  "file": "synth_02_otieno_v_lakeside_logistics.txt",
+  "query": "Why was Otieno's dismissal procedurally unfair?",
+  "answer": "The hearing invitation went to a number the employer knew was no longer in use, and two days was not a reasonable opportunity; no section 41 hearing",
+  "snippet": "An invitation that does not reach the employee is no invitation at all"
+ },
+ {
+  "type": "numeric",
+  "file": "synth_02_otieno_v_lakeside_logistics.txt",
+  "query": "How many months' compensation did the court award in Otieno v Lakeside Logistics?",
+  "answer": "Eight months: KES 1,160,000",
+  "snippet": "awards eight (8) months' gross salary as compensation"
+ },
+ {
+  "type": "numeric",
+  "file": "synth_02_otieno_v_lakeside_logistics.txt",
+  "query": "What was the total award to the claimant in the Lakeside Logistics unfair termination case?",
+  "answer": "KES 1,400,308 subject to statutory deductions",
+  "snippet": "Total award: KES 1,400,308"
+ },
+ {
+  "type": "paraphrase",
+  "file": "synth_02_otieno_v_lakeside_logistics.txt",
+  "query": "Who actually released the fertiliser consignment while the supervisor was on leave?",
+  "answer": "The night shift supervisor, Kevin Omondi, using the Claimant's shared credentials",
+  "snippet": "released by the night shift supervisor, Mr. Kevin Omondi"
+ },
+ {
+  "type": "lookup",
+  "file": "synth_02_otieno_v_lakeside_logistics.txt",
+  "query": "What happened to Lakeside Logistics' counterclaim for the lost consignment?",
+  "answer": "Dismissed for want of proof",
+  "snippet": "counterclaim for KES 1,620,000"
+ },
+ {
+  "type": "numeric",
+  "file": "synth_02_otieno_v_lakeside_logistics.txt",
+  "query": "How was accrued leave pay calculated in the Otieno judgment?",
+  "answer": "Basic salary 118,000 / 26 x 21 days = KES 95,308",
+  "snippet": "KES 118,000 / 26 working days x 21 days"
+ },
+ {
+  "type": "lookup",
+  "file": "synth_03_chebet_v_republic.txt",
+  "query": "What sentence had Daniel Chebet received before his appeal?",
+  "answer": "Twenty years' imprisonment",
+  "snippet": "sentenced to twenty (20) years' imprisonment"
+ },
+ {
+  "type": "reasoning",
+  "file": "synth_03_chebet_v_republic.txt",
+  "query": "Why did the Court of Appeal find the identification of Chebet unsafe?",
+  "answer": "Single witness, night, two minutes, light 20m away, no first description, stranger, no identification parade",
+  "snippet": "gave no description of any attacker in her first report"
+ },
+ {
+  "type": "paraphrase",
+  "file": "synth_03_chebet_v_republic.txt",
+  "query": "Is dock identification reliable without an identification parade according to the Chebet appeal?",
+  "answer": "Generally worthless unless preceded by a properly conducted parade, save where the witness knew the accused",
+  "snippet": "Dock identification is generally worthless"
+ },
+ {
+  "type": "lookup",
+  "file": "synth_03_chebet_v_republic.txt",
+  "query": "What alibi did Chebet raise?",
+  "answer": "Night shift at a bakery in Langas from 6 p.m. to 6 a.m., supported by his supervisor and a duty roster",
+  "snippet": "bakery in Langas"
+ },
+ {
+  "type": "lookup",
+  "file": "synth_03_chebet_v_republic.txt",
+  "query": "What was the outcome of Chebet v Republic in the Court of Appeal?",
+  "answer": "Appeal allowed, conviction quashed, sentence set aside, appellant set at liberty",
+  "snippet": "The conviction for robbery with violence is quashed"
+ },
+ {
+  "type": "lookup",
+  "file": "synth_03_chebet_v_republic.txt",
+  "query": "What was stolen from Ruth Jepkosgei Sang?",
+  "answer": "A mobile phone worth KES 38,000 and KES 12,500 cash",
+  "snippet": "mobile phone valued at KES 38,000 and cash of KES 12,500"
+ },
+ {
+  "type": "reasoning",
+  "file": "synth_03_chebet_v_republic.txt",
+  "query": "Does an accused person have to prove an alibi?",
+  "answer": "No; the prosecution must displace it",
+  "snippet": "does not assume any burden of proving it"
+ },
+ {
+  "type": "numeric",
+  "file": "synth_04_westlands_commercial_lease.txt",
+  "query": "What is the monthly base rent for Shop Unit G4 at Highridge Court?",
+  "answer": "KES 280,000 per month exclusive of VAT for the first two years",
+  "snippet": "Base Rent of KES 280,000 per month"
+ },
+ {
+  "type": "numeric",
+  "file": "synth_04_westlands_commercial_lease.txt",
+  "query": "What will Mvule Pharmacy's rent be from February 2030?",
+  "answer": "KES 323,575 per month",
+  "snippet": "KES 323,575 from 1 February 2030"
+ },
+ {
+  "type": "numeric",
+  "file": "synth_04_westlands_commercial_lease.txt",
+  "query": "How much is the service charge under the Highridge Court lease?",
+  "answer": "KES 45,000 per month exclusive of VAT",
+  "snippet": "monthly Service Charge of KES 45,000"
+ },
+ {
+  "type": "lookup",
+  "file": "synth_04_westlands_commercial_lease.txt",
+  "query": "When can Mvule Pharmacy break the lease early, and how much notice is needed?",
+  "answer": "From 1 February 2029 with at least six months' notice, plus a two months' rent break fee",
+  "snippet": "not less than six (6) months' prior written notice"
+ },
+ {
+  "type": "numeric",
+  "file": "synth_04_westlands_commercial_lease.txt",
+  "query": "How big is the security deposit under the Westlands pharmacy lease?",
+  "answer": "Three months' base rent: KES 840,000",
+  "snippet": "namely KES 840,000"
+ },
+ {
+  "type": "paraphrase",
+  "file": "synth_04_westlands_commercial_lease.txt",
+  "query": "Can Highridge let another unit in the building to a chemist?",
+  "answer": "No, while the tenant is not in breach (exclusivity)",
+  "snippet": "shall not let any other unit in the Building for use as a pharmacy or chemist"
+ },
+ {
+  "type": "lookup",
+  "file": "synth_04_westlands_commercial_lease.txt",
+  "query": "How are disputes under the Highridge Court lease resolved?",
+  "answer": "Negotiation within 21 days, then sole-arbitrator arbitration in Nairobi under the Arbitration Act 1995",
+  "snippet": "arbitration by a sole arbitrator in Nairobi"
+ },
+ {
+  "type": "lookup",
+  "file": "synth_04_westlands_commercial_lease.txt",
+  "query": "What insurance must the pharmacy tenant carry at Highridge Court?",
+  "answer": "Public liability insurance of at least KES 20,000,000 per occurrence naming the Landlord",
+  "snippet": "public liability insurance of not less than KES 20,000,000"
+ },
+ {
+  "type": "lookup",
+  "file": "synth_04_westlands_commercial_lease.txt",
+  "query": "How long is the rent-free fit-out period for Mvule Pharmacy?",
+  "answer": "Two months (service charge still payable)",
+  "snippet": "rent-free period of two (2) months"
+ },
+ {
+  "type": "numeric",
+  "file": "synth_05_savanna_agritech_shareholders_agreement.txt",
+  "query": "How much did Acacia Growth Fund invest in Savanna Agritech?",
+  "answer": "USD 3,000,000 for 1,500,000 Series A Preference Shares at USD 2.00",
+  "snippet": "a total investment of USD 3,000,000"
+ },
+ {
+  "type": "lookup",
+  "file": "synth_05_savanna_agritech_shareholders_agreement.txt",
+  "query": "How many directors sit on the Savanna Agritech board and who appoints them?",
+  "answer": "Five: two by the Founder, one by the Co-Founder, one by the Investor, one independent",
+  "snippet": "The Board shall consist of five (5) directors"
+ },
+ {
+  "type": "numeric",
+  "file": "synth_05_savanna_agritech_shareholders_agreement.txt",
+  "query": "What shareholding threshold triggers the drag-along in the Savanna Agritech SHA?",
+  "answer": "At least 75% (including the Investor), and price per share not less than USD 4.00",
+  "snippet": "not less than seventy-five per cent (75%)"
+ },
+ {
+  "type": "lookup",
+  "file": "synth_05_savanna_agritech_shareholders_agreement.txt",
+  "query": "How long is the founders' non-compete in the Savanna Agritech agreement?",
+  "answer": "24 months, covering Kenya, Uganda and Tanzania",
+  "snippet": "for twenty-four (24) months after ceasing to be a shareholder or employee"
+ },
+ {
+  "type": "numeric",
+  "file": "synth_05_savanna_agritech_shareholders_agreement.txt",
+  "query": "Above what amount does Savanna Agritech need investor consent to borrow?",
+  "answer": "USD 250,000 in aggregate outstanding",
+  "snippet": "borrowing in excess of USD 250,000"
+ },
+ {
+  "type": "reasoning",
+  "file": "synth_05_savanna_agritech_shareholders_agreement.txt",
+  "query": "What happens to a Savanna Agritech founder's vested shares if they resign within 24 months?",
+  "answer": "Bad Leaver: unvested at nominal value, vested at the lower of fair market value and the original price",
+  "snippet": "at the lower of fair market value and the price originally paid"
+ },
+ {
+  "type": "paraphrase",
+  "file": "synth_05_savanna_agritech_shareholders_agreement.txt",
+  "query": "How is a board deadlock finally broken at Savanna Agritech?",
+  "answer": "Advisers, then NCIA mediation, then a Russian roulette buy-sell notice after 60 days",
+  "snippet": "Russian roulette notice"
+ },
+ {
+  "type": "lookup",
+  "file": "synth_05_savanna_agritech_shareholders_agreement.txt",
+  "query": "What is the board quorum for Savanna Agritech?",
+  "answer": "Three directors including the Investor Director",
+  "snippet": "quorum for Board meetings shall be three (3) directors"
+ },
+ {
+  "type": "lookup",
+  "file": "synth_06_kiboko_pay_data_protection_opinion.txt",
+  "query": "Does Kiboko Pay need to register with the ODPC?",
+  "answer": "Yes, as both data controller and data processor, before launch",
+  "snippet": "must register as both a data controller and a data processor"
+ },
+ {
+  "type": "reasoning",
+  "file": "synth_06_kiboko_pay_data_protection_opinion.txt",
+  "query": "Why shouldn't Kiboko Pay rely on consent for credit scoring?",
+  "answer": "Consent can be withdrawn at any time, which would stop loan monitoring; use contract plus legitimate interests",
+  "snippet": "a customer who withdraws consent mid-loan"
+ },
+ {
+  "type": "numeric",
+  "file": "synth_06_kiboko_pay_data_protection_opinion.txt",
+  "query": "By when must Kiboko Pay file its data protection impact assessment?",
+  "answer": "60 days before processing: by 1 March 2026 for a 1 May 2026 launch",
+  "snippet": "should be filed no later than 1 March 2026"
+ },
+ {
+  "type": "numeric",
+  "file": "synth_06_kiboko_pay_data_protection_opinion.txt",
+  "query": "Within how many hours must a data processor tell the controller about a breach, per the Kiboko opinion?",
+  "answer": "48 hours (contract should require 24)",
+  "snippet": "within forty-eight (48) hours"
+ },
+ {
+  "type": "numeric",
+  "file": "synth_06_kiboko_pay_data_protection_opinion.txt",
+  "query": "What is the maximum data protection fine mentioned in the Kiboko Pay opinion?",
+  "answer": "KES 5,000,000 or 1% of annual turnover, whichever is lower",
+  "snippet": "KES 5,000,000 or one per cent (1%) of the annual turnover"
+ },
+ {
+  "type": "paraphrase",
+  "file": "synth_06_kiboko_pay_data_protection_opinion.txt",
+  "query": "Can Kiboko Wallet's scoring model use payments to hospitals as an input?",
+  "answer": "No; merchant data revealing health or religion is sensitive and must be excluded",
+  "snippet": "must not use merchant category data"
+ },
+ {
+  "type": "lookup",
+  "file": "synth_06_kiboko_pay_data_protection_opinion.txt",
+  "query": "How long should Kiboko Pay keep data on declined loan applications?",
+  "answer": "Delete after 12 months (loan records kept 7 years after closure)",
+  "snippet": "deleting declined-application data after twelve (12) months"
+ },
+ {
+  "type": "lookup",
+  "file": "synth_06_kiboko_pay_data_protection_opinion.txt",
+  "query": "Who is the proposed breach lead in Kiboko Pay's incident response plan?",
+  "answer": "Ms. Naomi Chepkoech, Head of Information Security",
+  "snippet": "Ms. Naomi Chepkoech"
+ },
+ {
+  "type": "deep",
+  "file": "synth_01_estate_of_mwangi.txt",
+  "query": "Which surveyor did the court appoint to subdivide the Solai parcel in the Mwangi estate?",
+  "answer": "Mr. Joseph Kirui, a licensed surveyor in Nakuru",
+  "snippet": "Mr. Joseph Kirui"
+ },
+ {
+  "type": "deep",
+  "file": "synth_01_estate_of_mwangi.txt",
+  "query": "How deep is the borehole Peter Mwangi sank on the Solai land?",
+  "answer": "180 metres",
+  "snippet": "borehole 180 metres deep"
+ },
+ {
+  "type": "deep",
+  "file": "synth_01_estate_of_mwangi.txt",
+  "query": "Can the widow in the Mwangi estate sell the Bahati land during her life interest?",
+  "answer": "Not without consent of all co-holders or leave of court; a restriction is to be registered",
+  "snippet": "may not sell any immovable property comprised in the estate without the consent"
+ },
+ {
+  "type": "deep",
+  "file": "synth_01_estate_of_mwangi.txt",
+  "query": "How many cows does each Mwangi child's borehole water right cover?",
+  "answer": "Domestic use plus not more than five dairy cows",
+  "snippet": "for not more than five dairy cows"
+ },
+ {
+  "type": "deep",
+  "file": "synth_02_otieno_v_lakeside_logistics.txt",
+  "query": "Was any deduction made for the KES 63,200 paid to Otieno on 31 January 2024?",
+  "answer": "No; it was salary for days worked, not a terminal benefit",
+  "snippet": "it is not a terminal benefit and no deduction shall be made"
+ },
+ {
+  "type": "deep",
+  "file": "synth_02_otieno_v_lakeside_logistics.txt",
+  "query": "Why was Otieno's claim for service pay declined?",
+  "answer": "He was an NSSF member, so section 35(6) excludes service pay",
+  "snippet": "is not entitled to service pay"
+ },
+ {
+  "type": "deep",
+  "file": "synth_02_otieno_v_lakeside_logistics.txt",
+  "query": "What happened to the CCTV footage of the loading bay in the Lakeside Logistics case?",
+  "answer": "Overwritten after 14 days, contrary to the 90-day preservation policy",
+  "snippet": "automatically overwritten after fourteen (14) days"
+ },
+ {
+  "type": "deep",
+  "file": "synth_02_otieno_v_lakeside_logistics.txt",
+  "query": "How did the claimant in Otieno v Lakeside Logistics mitigate his loss?",
+  "answer": "Applied for eleven jobs, four interviews, casual work at KES 2,500/day since July 2025",
+  "snippet": "applied for eleven positions"
+ },
+ {
+  "type": "deep",
+  "file": "synth_03_chebet_v_republic.txt",
+  "query": "Who was the arresting officer in the Chebet robbery case and what did he recover?",
+  "answer": "Corporal Silas Ruto; nothing connected with the robbery",
+  "snippet": "Corporal Silas Ruto"
+ },
+ {
+  "type": "deep",
+  "file": "synth_03_chebet_v_republic.txt",
+  "query": "On what basis did the complainant say she recognised Chebet at the bus stage?",
+  "answer": "His walking style and height",
+  "snippet": "by his walking style and his height"
+ },
+ {
+  "type": "deep",
+  "file": "synth_03_chebet_v_republic.txt",
+  "query": "According to the Chebet judgment, how many people should be in an identification parade?",
+  "answer": "At least eight persons of similar age, height, appearance and class of life",
+  "snippet": "among at least eight persons"
+ },
+ {
+  "type": "deep",
+  "file": "synth_04_westlands_commercial_lease.txt",
+  "query": "What administration fee does Highridge add to the pharmacy's electricity bill?",
+  "answer": "5% on top of the supplier tariff",
+  "snippet": "administration fee of five per cent (5%)"
+ },
+ {
+  "type": "deep",
+  "file": "synth_04_westlands_commercial_lease.txt",
+  "query": "What size fascia sign can Mvule Pharmacy put up?",
+  "answer": "Up to 2.4 m wide and 0.6 m high, with County approval",
+  "snippet": "not exceeding 2.4 metres in width"
+ },
+ {
+  "type": "deep",
+  "file": "synth_04_westlands_commercial_lease.txt",
+  "query": "How must the pharmacy dispose of expired medicines under the Highridge Court building rules?",
+  "answer": "Via a licensed hazardous waste contractor at least monthly, not the central refuse room",
+  "snippet": "licensed hazardous waste contractor"
+ },
+ {
+  "type": "deep",
+  "file": "synth_04_westlands_commercial_lease.txt",
+  "query": "What is the total service charge budget for Highridge Court in 2026?",
+  "answer": "KES 12,300,000 per year",
+  "snippet": "Total budget: KES 12,300,000"
+ },
+ {
+  "type": "deep",
+  "file": "synth_04_westlands_commercial_lease.txt",
+  "query": "If a lockdown closes Mvule Pharmacy for over 30 days, is rent reduced?",
+  "answer": "Base rent halved beyond 30 days, but not if allowed to open as an essential service",
+  "snippet": "reduced by fifty per cent (50%)"
+ },
+ {
+  "type": "deep",
+  "file": "synth_05_savanna_agritech_shareholders_agreement.txt",
+  "query": "How much of Acacia's investment goes to the Savanna Agritech loan book?",
+  "answer": "30%, USD 900,000",
+  "snippet": "30% (USD 900,000)"
+ },
+ {
+  "type": "deep",
+  "file": "synth_05_savanna_agritech_shareholders_agreement.txt",
+  "query": "In the Savanna Agritech worked example, would the investor convert or take the preference on a USD 10 million sale?",
+  "answer": "Take the USD 3,000,000 preference (conversion gives only USD 2,500,000)",
+  "snippet": "would in this example take the preference amount"
+ },
+ {
+  "type": "deep",
+  "file": "synth_05_savanna_agritech_shareholders_agreement.txt",
+  "query": "What key person insurance must Savanna Agritech take out on its founder?",
+  "answer": "USD 500,000 life and critical illness on the Founder (USD 250,000 on the Co-Founder)",
+  "snippet": "in the amount of USD 500,000"
+ },
+ {
+  "type": "deep",
+  "file": "synth_05_savanna_agritech_shareholders_agreement.txt",
+  "query": "What is the cap on the founders' warranty liability in the Savanna Agritech SHA?",
+  "answer": "USD 300,000 each, claims only above USD 25,000",
+  "snippet": "shall not exceed USD 300,000"
+ },
+ {
+  "type": "deep",
+  "file": "synth_05_savanna_agritech_shareholders_agreement.txt",
+  "query": "When can Acacia require redemption of its Savanna Agritech preference shares?",
+  "answer": "If no exit by 31 December 2032, at USD 2.00 per share in three annual instalments",
+  "snippet": "31 December 2032"
+ },
+ {
+  "type": "deep",
+  "file": "synth_06_kiboko_pay_data_protection_opinion.txt",
+  "query": "What loan sizes will Kiboko Wallet offer?",
+  "answer": "KES 500 to KES 50,000, repayable in 30 days",
+  "snippet": "between KES 500 and KES 50,000"
+ },
+ {
+  "type": "deep",
+  "file": "synth_06_kiboko_pay_data_protection_opinion.txt",
+  "query": "Why does the Kiboko opinion warn against reading customers' contact lists?",
+  "answer": "Using contacts to pressure repayment would be unlawful and has drawn enforcement against digital lenders",
+  "snippet": "using a borrower's contacts to pressure repayment would be unlawful"
+ },
+ {
+  "type": "deep",
+  "file": "synth_06_kiboko_pay_data_protection_opinion.txt",
+  "query": "How often should Kiboko Pay test its scoring model for bias?",
+  "answer": "Quarterly, by gender, age band and county; first test before launch",
+  "snippet": "quarterly testing of approval rates by gender, age band, and county"
+ },
+ {
+  "type": "deep",
+  "file": "synth_06_kiboko_pay_data_protection_opinion.txt",
+  "query": "Who should Kiboko Pay's data protection officer report to?",
+  "answer": "The Board Risk Committee, not the CTO",
+  "snippet": "reporting directly to the Board Risk Committee"
+ },
+ {
+  "type": "negative",
+  "file": null,
+  "query": "What did the court decide in the Mombasa port congestion arbitration between Bahari Shipping and the Ports Authority?",
+  "answer": "Not in the repository",
+  "snippet": null
+ },
+ {
+  "type": "negative",
+  "file": null,
+  "query": "What is the monthly rent under the Kilimani residential tenancy for Flat 3B?",
+  "answer": "Not in the repository",
+  "snippet": null
+ },
+ {
+  "type": "negative",
+  "file": null,
+  "query": "What vesting schedule applies to employees under the Kiboko Pay share option plan?",
+  "answer": "Not in the repository (the Kiboko document is a data protection opinion; vesting is in the Savanna SHA for founders only)",
+  "snippet": null
+ },
+ {
+  "type": "ambiguous",
+  "file": null,
+  "query": "What did the judge decide about costs?",
+  "answer": "Should ask which case (several judgments have costs orders)",
+  "snippet": null
+ },
+ {
+  "type": "ambiguous",
+  "file": null,
+  "query": "What is the notice period to terminate the agreement?",
+  "answer": "Should ask which agreement",
+  "snippet": null
+ }
+]

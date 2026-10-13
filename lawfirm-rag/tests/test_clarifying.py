@@ -31,3 +31,12 @@ def test_does_not_ask_when_document_is_named():
 def test_does_not_ask_for_general_or_single_document_questions():
     assert _clarifying_question("What is the limitation period for appeals?", docs(MUT, TVA)) is None
     assert _clarifying_question("What orders did the judge make?", docs(NGENO, NGENO)) is None
+
+
+def test_does_not_ask_when_user_names_an_unknown_document():
+    q = "What did the court decide in the Mombasa port arbitration between Bahari Shipping and the Ports Authority?"
+    assert _clarifying_question(q, docs(NGENO, TVA)) is None
+
+
+def test_synthetic_prefix_stripped_from_titles():
+    assert _pretty_title("synth_02_otieno_v_lakeside_logistics.txt") == "Otieno v Lakeside Logistics"

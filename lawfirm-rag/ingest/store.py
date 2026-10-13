@@ -121,8 +121,9 @@ async def upsert_file(
 
     chunking_llm = None
     if settings.use_agentic_chunking:
-        from providers import make_chat_llm
-
+        # No local re-import here: it made make_chat_llm a function-local
+        # name, so the doc-intelligence call above raised UnboundLocalError
+        # and every upload was stored as doc_type "unknown".
         chunking_llm = make_chat_llm()
     chunks, chunking_method = chunk_text_auto(text, llm=chunking_llm)
     if not chunks:

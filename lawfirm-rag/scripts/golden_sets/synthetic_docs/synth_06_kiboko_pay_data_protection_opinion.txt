@@ -1,0 +1,135 @@
+SYNTHETIC TEST DOCUMENT — FICTIONAL. The client, its products and the facts are invented for retrieval testing. Statements of Kenyan law are summaries for test purposes only and are not legal advice.
+
+PRIVATE AND CONFIDENTIAL — LEGAL OPINION
+
+TO: The Board of Directors, Kiboko Pay Limited
+FROM: Commercial & Regulatory Practice Group
+DATE: 20 February 2026
+RE: Data protection compliance for the "Kiboko Wallet" savings and micro-loan product
+
+1. INTRODUCTION AND SCOPE
+
+1.1 You have asked us to advise on the data protection implications of launching Kiboko Wallet, a mobile savings and micro-loan product, in Kenya under the Data Protection Act, 2019 (the "Act") and its regulations. In particular you have asked: (a) whether Kiboko Pay must register with the Office of the Data Protection Commissioner ("ODPC"); (b) the lawful basis for using mobile money transaction histories to score creditworthiness; (c) whether a data protection impact assessment is required; (d) the conditions for hosting customer data on cloud servers in Ireland; (e) breach notification obligations; and (f) exposure to penalties.
+
+1.2 This opinion is based on the product description dated 2 February 2026, the draft privacy notice version 0.3, and a call with your Chief Technology Officer, Mr. Felix Mutua, on 12 February 2026. We have not audited your systems.
+
+2. EXECUTIVE SUMMARY
+
+2.1 In summary:
+(a) Kiboko Pay must register as both a data controller and a data processor before launch;
+(b) consent is not the appropriate primary lawful basis for credit scoring; performance of a contract, supported by legitimate interests for fraud prevention, is more robust;
+(c) a data protection impact assessment is mandatory because the product involves automated decision-making with legal or similarly significant effects and large-scale processing of financial data;
+(d) hosting in Ireland is permissible if appropriate safeguards are documented and the ODPC can be given proof of them on request;
+(e) personal data breaches must be notified to the Data Commissioner within seventy-two (72) hours of becoming aware of them where there is a real risk of harm; and
+(f) the maximum administrative fine is KES 5,000,000 or one per cent (1%) of annual turnover in the preceding financial year, whichever is lower.
+
+2A. THE PRODUCT AND DATA FLOWS
+
+2A.1 Kiboko Wallet will allow customers to open a savings wallet by dialling a USSD code or downloading an Android app, and to apply for micro-loans of between KES 500 and KES 50,000 with a repayment period of thirty (30) days. The product is expected to reach 400,000 customers in its first year.
+
+2A.2 At onboarding the customer provides their name, national identity number, date of birth, and mobile number, and takes a selfie that is matched against the identity document photograph. Customers must be at least eighteen (18) years old; applicants whose date of birth shows they are under 18 are rejected automatically and their data is deleted within thirty (30) days.
+
+2A.3 With the customer's permission the app reads the customer's mobile money transaction SMS messages for the preceding twelve (12) months to build a credit score. The app does not read personal SMS messages, contacts, call logs, or photographs. We were told by Mr. Mutua that an earlier prototype requested access to the customer's contact list for debt-collection purposes; we strongly advise that this access must not be requested in the launch version, as using a borrower's contacts to pressure repayment would be unlawful and has attracted enforcement action against other digital lenders.
+
+2A.4 Kiboko Pay will share data with: (a) three licensed credit reference bureaus, to which positive and negative repayment information will be submitted monthly; (b) an SMS gateway provider for transaction notifications; (c) a cloud hosting provider with servers in Ireland; and (d) a debt-collection agency, which will receive only the name, mobile number, and outstanding balance of accounts more than sixty (60) days in arrears.
+
+3. REGISTRATION
+
+3.1 The Data Protection (Registration of Data Controllers and Data Processors) Regulations, 2021 require entities processing personal data above prescribed thresholds, and entities in specified sectors, to register. Entities processing data for the purpose of lending and credit reference fall within the mandatory registration category irrespective of turnover.
+
+3.2 Registration certificates are valid for twenty-four (24) months and must be renewed. We recommend applying at least six (6) weeks before the planned launch date of 1 May 2026, given current processing times.
+
+4. LAWFUL BASIS FOR CREDIT SCORING
+
+4.1 Section 30 of the Act lists the lawful bases for processing. The draft privacy notice relies on consent for all processing. We advise against this for credit scoring, because consent must be freely given and capable of being withdrawn at any time; a customer who withdraws consent mid-loan would prevent you from monitoring repayment and managing default risk.
+
+4.2 We recommend that processing of transaction histories for scoring be based on the performance of the loan contract the customer has asked to enter into, with legitimate interests relied on for fraud detection and anti-money laundering screening. Marketing messages should continue to rely on consent, with a separate, unticked opt-in.
+
+4.3 Mobile money transaction histories may reveal sensitive information, for example payments to hospitals or religious institutions. Health and religious beliefs are sensitive personal data under the Act. The scoring model must not use merchant category data that reveals such information as an input variable.
+
+5. AUTOMATED DECISION-MAKING
+
+5.1 Section 35 of the Act gives a data subject the right not to be subject to a decision based solely on automated processing, including profiling, which produces legal effects or significantly affects them. A loan refusal or credit limit decision made solely by the scoring algorithm falls within this provision.
+
+5.2 You may rely on the exception for decisions necessary for entering into a contract, but you must implement suitable safeguards, including: informing the customer that the decision was automated; providing a simple way to request human review; and responding to review requests within fourteen (14) days. We recommend a dedicated "Request review" button in the app.
+
+6. DATA PROTECTION IMPACT ASSESSMENT
+
+6.1 Section 31 requires a data protection impact assessment where processing is likely to result in a high risk to the rights and freedoms of data subjects. Large-scale credit scoring using automated decision-making clearly meets this threshold.
+
+6.2 The assessment must be completed before processing begins and submitted to the ODPC at least sixty (60) days before the processing starts. Given the 1 May 2026 launch date, the assessment should be filed no later than 1 March 2026. If this date cannot be met, launch should be deferred.
+
+7. CROSS-BORDER TRANSFER TO IRELAND
+
+7.1 Sections 48 to 50 of the Act regulate transfers outside Kenya. A transfer is permitted where the controller has given proof to the Data Commissioner of appropriate safeguards with respect to the security and protection of the data, which may include the jurisdiction's data protection laws being comparable to the Act.
+
+7.2 Ireland applies the EU General Data Protection Regulation, which we consider provides comparable protection. You should nonetheless: (a) put in place a written data processing agreement with the cloud provider; (b) ensure encryption at rest using keys controlled by Kiboko Pay; (c) maintain a transfer register; and (d) keep a copy of all customer data processed for the purposes of actual provision of a strategic interest of the State, if notified by the Cabinet Secretary, on a server or data centre located in Kenya.
+
+8. DATA BREACH NOTIFICATION
+
+8.1 Under section 43, where there is a real risk of harm to data subjects, the controller must notify the Data Commissioner without delay, within seventy-two (72) hours of becoming aware of the breach, and must communicate the breach to affected data subjects in writing within a reasonably practicable period unless the identity of the data subject cannot be established.
+
+8.2 A data processor must notify the controller within forty-eight (48) hours of becoming aware of a breach. Your contract with the cloud provider should therefore impose a contractual notification window of no more than twenty-four (24) hours, to leave time for internal assessment.
+
+8.3 We recommend adopting an incident response plan with a named breach lead, currently proposed to be the Head of Information Security, Ms. Naomi Chepkoech.
+
+8A. DATA SUBJECT RIGHTS
+
+8A.1 Customers have the rights under section 26 of the Act to be informed of the use of their data, to access it, to object to processing, to correction of false or misleading data, and to deletion of false or misleading data. In practice, Kiboko Pay should expect requests for copies of transaction-based scores and for correction of repayment records reported to credit reference bureaus.
+
+8A.2 We recommend that access requests be fulfilled within seven (7) days, and that the app provide a self-service screen showing the data used for the customer's most recent credit decision. A request to correct data reported to a credit reference bureau should be investigated and, if upheld, the correction notified to all three bureaus within the same period.
+
+8A.3 Customers may not require deletion of loan records that Kiboko Pay must retain by law while a loan is outstanding or during the statutory retention period described in section 9 below; the customer should be told this, and the reason, in the response.
+
+8B. INTERNAL ACCESS CONTROLS
+
+8B.1 Customer service agents should see only masked national ID numbers, showing the last four digits, and should not be able to export customer lists. Access to full transaction histories should be limited to the credit risk team and logged.
+
+8B.2 Production databases should be accessible only through a bastion host with two-factor authentication, and access logs retained for at least twelve (12) months. Quarterly access reviews should remove accounts of staff who have changed roles or left.
+
+8B.3 All staff with access to customer data should complete data protection training before being granted access and annually thereafter, with completion records kept for inspection by the ODPC.
+
+9. RETENTION
+
+9.1 Customer data should not be kept longer than necessary. We recommend retaining loan records for seven (7) years after the loan is closed to meet tax and anti-money laundering record-keeping obligations, and deleting declined-application data after twelve (12) months.
+
+9A. DIRECT MARKETING
+
+9A.1 Section 37 of the Act restricts the commercial use of personal data for direct marketing. Kiboko Pay may send customers marketing about its own savings and loan products only where the customer has opted in, and every marketing SMS must include a simple, free opt-out (for example, "Reply STOP to 2xxxx"). Opt-outs must be processed within forty-eight (48) hours.
+
+9A.2 Marketing must not be sent between 8:00 p.m. and 8:00 a.m. Customer data must not be shared with partner merchants for their own marketing.
+
+9B. DATA PROTECTION OFFICER
+
+9B.1 Section 24 of the Act permits a controller to designate a data protection officer, and it is good practice for an entity whose core activities involve regular and systematic monitoring of data subjects on a large scale. We recommend that Kiboko Pay appoint a data protection officer reporting directly to the Board Risk Committee, rather than to the Chief Technology Officer, to avoid a conflict of interest. The officer's contact details must be published in the privacy notice and the app.
+
+9C. GOVERNANCE OF THE SCORING MODEL
+
+9C.1 Because the scoring model drives automated decisions, we recommend a model governance framework comprising: (a) a written model card describing the data inputs, the training period, and known limitations; (b) quarterly testing of approval rates by gender, age band, and county to detect unfair bias; (c) human sign-off by the Head of Credit Risk before any new model version is deployed; and (d) retention of each model version and its training data summary for at least the life of the loans it scored.
+
+9C.2 The first bias test should be run on the pilot data before launch. If approval rates for any group differ from the overall approval rate by more than ten percentage points without a credit-risk justification, the model should not be deployed until the cause is understood.
+
+9D. COMPLAINTS
+
+9D.1 Customers who are dissatisfied with how their data is handled may complain to the Data Commissioner. Before that, Kiboko Pay should offer an internal complaints channel in the app and through a toll-free number, acknowledge complaints within two (2) working days, and resolve them within fourteen (14) days.
+
+10. PENALTIES AND ENFORCEMENT
+
+10.1 The Data Commissioner may issue an enforcement notice and, where it is not complied with, a penalty notice. The maximum administrative fine is KES 5,000,000 or one per cent (1%) of the annual turnover of the preceding financial year, whichever is lower. Data subjects may also claim compensation for damage, including distress, caused by a contravention.
+
+11. RECOMMENDED ACTION PLAN
+
+11.1 We recommend the following steps, in order:
+(1) file registration as data controller and data processor immediately;
+(2) complete and submit the data protection impact assessment by 1 March 2026;
+(3) revise privacy notice version 0.3 to replace consent with contract and legitimate interests as described in section 4;
+(4) remove merchant category data revealing health or religious information from the scoring model;
+(5) build the human review flow for automated decisions;
+(6) execute the data processing agreement with the cloud provider, including a 24-hour breach notification clause;
+(7) adopt the incident response plan and retention schedule.
+
+12. QUALIFICATIONS
+
+12.1 This opinion is limited to the laws of Kenya in force at its date. It is given for the sole benefit of the Board of Kiboko Pay Limited and may not be relied on by any other person without our written consent.
+
+Commercial & Regulatory Practice Group

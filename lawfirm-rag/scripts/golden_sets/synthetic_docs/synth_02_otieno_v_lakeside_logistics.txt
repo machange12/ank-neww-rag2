@@ -1,0 +1,127 @@
+SYNTHETIC TEST DOCUMENT — FICTIONAL. All names, parties, and facts are invented for retrieval testing and do not refer to any real case, company, or person.
+
+REPUBLIC OF KENYA
+IN THE EMPLOYMENT AND LABOUR RELATIONS COURT AT KISUMU
+CAUSE NO. E041 OF 2024
+
+BETWEEN
+JOSEPH OCHIENG OTIENO ............................................ CLAIMANT
+AND
+LAKESIDE LOGISTICS LIMITED ................................ RESPONDENT
+
+JUDGMENT
+
+Delivered on 17 April 2026 before Hon. Justice M. K. Wafula
+
+BACKGROUND
+
+1. The Claimant was employed by the Respondent, a freight and warehousing company based in Kisumu, as a Fleet Operations Supervisor under a written contract dated 1 September 2016. At the time of his dismissal his gross monthly salary was KES 145,000, comprising a basic salary of KES 118,000, a house allowance of KES 20,000 and a commuter allowance of KES 7,000.
+
+2. On 22 January 2024, the Respondent issued the Claimant with a letter titled "Summary Dismissal" alleging gross misconduct, specifically that he had authorised the release of a consignment of 340 bags of fertiliser to a third-party transporter without a delivery order, resulting in a loss of KES 1,620,000 to the Respondent's client.
+
+3. The Claimant filed a Memorandum of Claim on 14 March 2024 alleging that the dismissal was unfair both substantively and procedurally, and seeking a declaration to that effect, twelve months' compensation, one month's salary in lieu of notice, payment for 21 accrued and untaken leave days, a certificate of service, and costs.
+
+4. The Respondent filed a Response on 30 April 2024 contending that the dismissal was justified, that the Claimant was invited to a disciplinary hearing which he failed to attend, and that he was paid all his terminal dues.
+
+THE EVIDENCE
+
+5. The Claimant testified that on 9 January 2024 he was on approved leave and that the consignment was released by the night shift supervisor, Mr. Kevin Omondi, using the Claimant's login credentials, which had been shared with the night shift team on the instructions of the Operations Manager to cover system downtime in December 2023. He produced an email dated 18 December 2023 from the Operations Manager directing that "supervisor credentials be made available to night shift leads until the WMS upgrade is completed."
+
+6. He further testified that he received a show-cause letter on 15 January 2024, requiring a response within 48 hours, which he provided on 16 January 2024. He stated that he was never invited to a disciplinary hearing and that the first communication he received after his response was the summary dismissal letter.
+
+7. The Respondent called two witnesses. RW1, the Human Resources Manager, Ms. Janet Akinyi, testified that an invitation to a disciplinary hearing scheduled for 19 January 2024 was sent to the Claimant by WhatsApp on 17 January 2024. On cross-examination she conceded that the message was sent to a number that the Claimant had replaced in 2022 and that the Respondent's own HR records reflected the new number.
+
+8. RW2, the Operations Manager, Mr. Daniel Kiprop, testified that the Claimant remained responsible for any transaction made under his credentials. On cross-examination he admitted authoring the email of 18 December 2023 and that the Claimant's leave for 8 to 12 January 2024 had been approved in the HR system.
+
+8A. RW2 further testified that the Respondent's warehouse management system, known internally as SkyStock version 4.2, records the user account under which each release is authorised but not the physical terminal from which it is made. He conceded that the system was upgraded on 3 February 2024, after the dismissal, to add terminal tracking and two-factor login, and that the upgrade had been recommended by an external IT auditor in a report dated 30 October 2023.
+
+8B. Asked about closed-circuit television footage of the loading bay on the night of 9 January 2024, RW2 testified that the footage was automatically overwritten after fourteen (14) days and was not preserved, although the Respondent's own security policy requires footage relating to any reported loss to be preserved for ninety (90) days. The loss was reported to management on 10 January 2024.
+
+8C. RW1 produced the Claimant's final payslip, which showed a payment of KES 63,200 on 31 January 2024. She conceded on cross-examination that the payment represented salary for days worked between 1 and 7 January 2024 together with a pro-rated commuter allowance, and that no payment was made in respect of notice, leave, or service.
+
+8D. The Claimant called one witness, CW2, Ms. Beatrice Anyango, a former stores clerk with the Respondent, who testified that she was on duty on the night of 9 January 2024 and saw Mr. Kevin Omondi log into the system at the dispatch desk and print the release note. She testified that Mr. Omondi told her the release had been "cleared by head office on the phone." She left the Respondent's employment in June 2024 and confirmed that she bore the Respondent no grudge.
+
+8E. Mr. Kevin Omondi was not called as a witness by either party. The Respondent's counsel informed the court that he had absconded from duty in February 2024 and could not be traced. The court draws the inference that his evidence would not have supported the Respondent's case.
+
+SUBMISSIONS
+
+8F. Counsel for the Claimant, Mr. T. Oduor, submitted that the Respondent's own documents established that the Claimant was absent on approved leave, that his credentials had been shared on the employer's instructions, and that the employer had been warned by its auditor of the risk of shared credentials months before the incident. He urged the court to award the maximum twelve months' compensation on account of the stigma of a summary dismissal for alleged dishonesty in a small logistics industry.
+
+8G. Counsel for the Respondent, Ms. P. Chelangat, submitted that a supervisor is accountable for transactions under his credentials whether or not he is physically present, that the Claimant had been given an opportunity to be heard through the show-cause process, and that his written response of 16 January 2024 amounted to a hearing. In the alternative, she urged that any compensation should not exceed three months' salary because the Claimant had contributed to the loss by allowing his credentials to be used.
+
+ISSUES
+
+9. The issues for determination are:
+(a) Whether the dismissal was procedurally fair;
+(b) Whether there was a valid and fair reason for the dismissal;
+(c) What remedies, if any, the Claimant is entitled to.
+
+PROCEDURAL FAIRNESS
+
+10. Section 41 of the Employment Act requires that before terminating an employee on grounds of misconduct, the employer must explain to the employee, in a language the employee understands, the reason for which the termination is being considered, and the employee is entitled to have another employee or a shop floor union representative of his choice present during that explanation. The employer must also hear and consider any representations the employee makes.
+
+11. The court finds that the invitation to the disciplinary hearing was sent to a number which the Respondent knew, or ought to have known, was no longer in use. An invitation that does not reach the employee is no invitation at all. Further, the period between the alleged invitation on 17 January and the hearing on 19 January did not afford the Claimant a reasonable opportunity to prepare or to arrange for a representative. The court finds that the Claimant was not given a hearing as required by section 41.
+
+11A. The court has considered the Respondent's submission that the written response to the show-cause letter amounted to a hearing. A show-cause letter is a step in the disciplinary process; it is not a substitute for the hearing contemplated by section 41. The section requires the employer to explain the reasons in the presence of the employee's chosen representative and to hear and consider representations. A written exchange in which the employee answers allegations without knowing what evidence the employer holds against him, and without the opportunity to be accompanied, does not meet that standard.
+
+12. The dismissal was therefore procedurally unfair.
+
+SUBSTANTIVE FAIRNESS
+
+13. Under section 43, the employer bears the burden of proving the reason for termination, and under section 45 the reason must be valid and fair. The evidence establishes that the Claimant was on approved leave on the date of the release and that the use of his credentials by the night shift was sanctioned by the Respondent's own Operations Manager. The Respondent did not produce any system log showing that the Claimant personally authorised the release.
+
+13A. The court further notes that the Respondent failed to preserve the CCTV footage of the loading bay in breach of its own ninety-day preservation policy, that the external IT auditor had warned in October 2023 against shared credentials, and that the only eyewitness to the release, CW2, placed Mr. Kevin Omondi at the dispatch desk. The Respondent cannot rely on gaps in evidence that it was itself responsible for creating.
+
+14. The court is not satisfied that the Respondent has proved a valid reason. Holding an employee personally liable for a transaction carried out under credentials that the employer itself directed be shared is neither valid nor fair. The dismissal was substantively unfair.
+
+THE LAW ON SUMMARY DISMISSAL
+
+14A. Section 44(4) of the Employment Act lists matters that may amount to gross misconduct justifying summary dismissal, including where an employee knowingly fails or refuses to obey a lawful and proper command, or commits or is on reasonable and sufficient grounds suspected of having committed a criminal offence against or to the substantial detriment of the employer or the employer's property.
+
+14B. Summary dismissal is the most severe sanction available to an employer. It deprives the employee of notice and carries a stigma that affects future employment. For that reason the employer's grounds must be clear and the process scrupulous. An employer that relies on a suspicion must show that the suspicion was reasonable and was arrived at after a fair investigation. In the present case there was no investigation worthy of the name: the system logs were not analysed beyond the user account, the CCTV footage was lost, the night shift supervisor was not interviewed, and the Claimant's explanation that he was on approved leave, which the Respondent's own records confirmed, was ignored.
+
+14C. Nor is the court persuaded that sharing credentials on the employer's written instruction amounts to misconduct on the part of the Claimant. Where an employer directs a practice that weakens its own controls, it cannot later treat compliance with that direction as a dismissible offence. If the Respondent considered the practice risky, as its auditor had warned, the remedy lay in changing the instruction, not in dismissing the employee who followed it.
+
+CONTRIBUTION AND MITIGATION
+
+14D. In assessing compensation the court must consider whether the employee contributed to the termination and whether he has taken reasonable steps to mitigate his loss. The Claimant testified that he applied for eleven positions between February 2024 and the hearing, attended four interviews, and has since July 2025 worked as a casual transport coordinator for a cereals trader at a daily rate of KES 2,500 when work is available. He produced copies of applications and the casual engagement letter. The court is satisfied that he made reasonable efforts to mitigate his loss.
+
+14E. On contribution, the court has found that the sharing of credentials was directed by the employer. The Claimant's only contribution is that he did not, as a supervisor with seven years' experience, escalate his own concerns about the practice to management in writing. That is a modest contribution, and it is reflected in the decision not to award the maximum of twelve months.
+
+REMEDIES
+
+15. Section 49(1)(c) of the Employment Act permits compensation of up to twelve months' gross salary. In determining the award the court considers the factors in section 49(4), including the length of service, the employee's contribution to the termination, and the prospects of alternative employment.
+
+16. The Claimant served for over seven years with no prior disciplinary record. He has not secured alternative employment at a comparable level. However, the court notes that the Claimant participated in sharing credentials, albeit on instructions, and did not raise any concern about the practice. Taking all factors into account, the court awards eight (8) months' gross salary as compensation, being 8 x KES 145,000 = KES 1,160,000.
+
+17. On notice pay, the contract provided for one month's notice or payment in lieu. The Claimant is awarded KES 145,000.
+
+18. On accrued leave, the Respondent's leave records show 21 days accrued and untaken. Calculated on the basic salary at KES 118,000 / 26 working days x 21 days, the Claimant is awarded KES 95,308.
+
+18A. The Respondent urged the court to deduct the KES 63,200 paid on 31 January 2024 from any award. That payment was salary for days actually worked in January 2024 and was earned before the dismissal; it is not a terminal benefit and no deduction shall be made.
+
+18B. The Claimant also sought service pay. The evidence shows that both the Claimant and the Respondent made monthly contributions to the National Social Security Fund throughout his employment. Under section 35(6) of the Employment Act, an employee who is a member of such a scheme is not entitled to service pay. The claim for service pay is therefore declined.
+
+18C. The claim for damages for defamation arising from the dismissal letter is outside the jurisdiction of this court and is struck out; the Claimant remains free to pursue it in the appropriate forum.
+
+19. The Respondent shall issue a certificate of service within 30 days in accordance with section 51 of the Act.
+
+20. The Respondent's counterclaim for KES 1,620,000, being the value of the lost consignment, is dismissed for want of proof that the loss was occasioned by the Claimant.
+
+DISPOSITION
+
+21. Judgment is entered for the Claimant as follows:
+(a) A declaration that the summary dismissal of the Claimant on 22 January 2024 was unfair;
+(b) Compensation for unfair termination: KES 1,160,000;
+(c) One month's salary in lieu of notice: KES 145,000;
+(d) Accrued leave: KES 95,308;
+(e) Total award: KES 1,400,308, subject to statutory deductions;
+(f) Interest on the total award at court rates from the date of judgment until payment in full;
+(g) A certificate of service to issue within 30 days;
+(h) The counterclaim is dismissed;
+(i) The Respondent shall bear the costs of the claim and the counterclaim.
+
+DATED, SIGNED AND DELIVERED AT KISUMU THIS 17TH DAY OF APRIL 2026.
+
+M. K. WAFULA
+JUDGE

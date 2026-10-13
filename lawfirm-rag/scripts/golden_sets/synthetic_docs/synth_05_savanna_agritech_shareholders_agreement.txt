@@ -1,0 +1,180 @@
+SYNTHETIC TEST DOCUMENT — FICTIONAL. All names, parties, and terms are invented for retrieval testing and do not refer to any real company or person.
+
+SHAREHOLDERS' AGREEMENT
+
+relating to SAVANNA AGRITECH LIMITED
+
+Dated 3 March 2026
+
+PARTIES
+
+(1) TATU MWENDE KIOKO, of P.O. Box 22018-00100 Nairobi (the "Founder");
+(2) BARAKA OWINO ODHIAMBO, of P.O. Box 4410-40100 Kisumu (the "Co-Founder");
+(3) ACACIA GROWTH FUND I LP, a limited partnership established in Mauritius, acting by its general partner (the "Investor"); and
+(4) SAVANNA AGRITECH LIMITED, a company incorporated in Kenya under registration number PVT-9KD44XA (the "Company").
+
+RECITALS
+
+A. The Company develops and operates a mobile platform that connects smallholder farmers with input suppliers and produce buyers, and provides farmers with credit scoring based on harvest data.
+
+B. The Investor has agreed to subscribe for 1,500,000 Series A Preference Shares at a subscription price of USD 2.00 per share, a total investment of USD 3,000,000, under a subscription agreement of even date.
+
+C. The parties wish to regulate their relationship as shareholders and the management of the Company.
+
+1. SHAREHOLDING
+
+1.1 Immediately following completion of the Investor's subscription, the issued share capital of the Company shall be held as follows:
+(a) the Founder: 2,800,000 ordinary shares (46.67%);
+(b) the Co-Founder: 1,200,000 ordinary shares (20.00%);
+(c) the Investor: 1,500,000 Series A Preference Shares (25.00%);
+(d) the employee share option pool: 500,000 ordinary shares reserved (8.33%).
+
+1.2 The Series A Preference Shares carry a 1x non-participating liquidation preference, and are convertible into ordinary shares at the holder's option at any time on a one-for-one basis, subject to standard anti-dilution adjustment on a broad-based weighted average basis.
+
+1A. USE OF PROCEEDS
+
+1A.1 The Company shall apply the subscription monies of USD 3,000,000 substantially as follows, unless the Board, with the consent of the Investor Director, approves otherwise:
+(a) 45% (USD 1,350,000) on product development, including the credit-scoring engine and the Swahili and Luo voice interface;
+(b) 30% (USD 900,000) as capital for the farmer input-credit loan book;
+(c) 15% (USD 450,000) on expansion into Uganda, including licensing and the first twelve months of operating costs of a Kampala office;
+(d) 10% (USD 300,000) as general working capital.
+
+1A.2 The portion allocated to the loan book shall not be lent to any single farmer cooperative in an amount exceeding USD 60,000 at any time.
+
+1B. LIQUIDATION PREFERENCE — WORKED EXAMPLE
+
+1B.1 By way of illustration only: if the Company is sold for USD 10,000,000 for the entire share capital, the Investor may either (i) take its preference amount of USD 3,000,000, with the remaining USD 7,000,000 shared among the ordinary shareholders pro rata, or (ii) convert into 1,500,000 ordinary shares and share in the full USD 10,000,000 pro rata as an ordinary shareholder holding 25%, receiving USD 2,500,000. Because the preference is non-participating, the Investor cannot do both, and would in this example take the preference amount of USD 3,000,000.
+
+1B.2 If the sale price exceeds USD 12,000,000, conversion yields more than the preference amount, and the Investor would be expected to convert.
+
+1C. EMPLOYEE SHARE OPTION POOL
+
+1C.1 The 500,000 ordinary shares reserved for the employee share option pool shall be granted under a plan approved by the Board. Options shall vest over four (4) years with a one-year cliff, so that 25% vest on the first anniversary of the grant and the remainder vest in equal monthly instalments over the following thirty-six (36) months.
+
+1C.2 The exercise price shall be set by the Board at not less than the fair market value of an ordinary share on the date of grant, as determined by an independent valuation obtained at least once every twelve (12) months.
+
+1C.3 Grants to any single employee in excess of 50,000 options require the consent of the Investor Director.
+
+2. BOARD OF DIRECTORS
+
+2.1 The Board shall consist of five (5) directors, appointed as follows:
+(a) two (2) directors appointed by the Founder, one of whom shall be the Founder for so long as she remains an employee;
+(b) one (1) director appointed by the Co-Founder;
+(c) one (1) director appointed by the Investor (the "Investor Director"); and
+(d) one (1) independent non-executive director appointed by a majority of the Board with the consent of the Investor Director, who shall have experience in agricultural finance.
+
+2.2 The quorum for Board meetings shall be three (3) directors, which must include the Investor Director. If a quorum is not present within thirty minutes, the meeting shall be adjourned for seven (7) days, and at the adjourned meeting any three directors shall form a quorum.
+
+2.3 The Board shall meet at least once every quarter. The chairperson shall be the independent director and shall not have a casting vote.
+
+3. RESERVED MATTERS
+
+3.1 The Company shall not, and the shareholders shall procure that the Company does not, take any of the following actions without the prior written consent of the Investor:
+(a) amend the Articles of Association;
+(b) issue any shares or securities convertible into shares, other than under the employee share option pool;
+(c) incur borrowing in excess of USD 250,000 in aggregate outstanding at any time;
+(d) approve the annual budget and business plan, or depart from it by more than fifteen per cent (15%) on any line item;
+(e) acquire or dispose of any business, subsidiary, or asset with a value in excess of USD 100,000;
+(f) declare or pay any dividend;
+(g) appoint or remove the Chief Executive Officer or Chief Financial Officer;
+(h) enter into any transaction with a shareholder, director, or their related parties;
+(i) commence or settle any litigation with a value in excess of USD 50,000;
+(j) wind up the Company or apply for an administration order.
+
+4. TRANSFER OF SHARES
+
+4.1 Lock-in: neither the Founder nor the Co-Founder shall transfer any shares for a period of thirty-six (36) months from the date of this Agreement without the Investor's consent, save for transfers to a family trust approved by the Board.
+
+4.2 Pre-emption: any shareholder wishing to transfer shares (the "Seller") shall first offer them to the other shareholders pro rata to their holdings at the same price and on the same terms. The other shareholders shall have thirty (30) days to accept. Shares not taken up may be sold to a third party within ninety (90) days at a price not lower than the offer price.
+
+4.3 Tag-along: if any shareholder or shareholders propose to transfer shares that would result in a third party acquiring more than fifty per cent (50%) of the ordinary shares (on an as-converted basis), the other shareholders shall be entitled to require the purchaser to acquire their shares on the same terms and at the same price per share.
+
+4.4 Drag-along: if shareholders holding not less than seventy-five per cent (75%) of the shares (on an as-converted basis), which must include the Investor, accept a bona fide offer from a third party to acquire the entire issued share capital, they may require all other shareholders to sell their shares on the same terms, provided that the price per share is not less than USD 4.00.
+
+5. FOUNDER COMMITMENTS
+
+5.1 The Founder and the Co-Founder shall each devote the whole of their working time to the business of the Company.
+
+5.2 Vesting: 40% of each founder's ordinary shares are vested on the date of this Agreement. The remaining 60% vest in equal monthly instalments over thirty-six (36) months.
+
+5.3 Leaver provisions: if a founder ceases to be an employee:
+(a) as a Good Leaver (death, permanent incapacity, termination without cause, or resignation after 24 months approved by the Board), the Company may buy back the founder's unvested shares at nominal value and the vested shares are retained;
+(b) as a Bad Leaver (termination for cause, or resignation within 24 months), the Company may buy back all unvested shares at nominal value and all vested shares at the lower of fair market value and the price originally paid.
+
+5.4 Non-compete: for twenty-four (24) months after ceasing to be a shareholder or employee, whichever is later, no founder shall engage in any business in Kenya, Uganda, or Tanzania that competes with the Company's agricultural marketplace or farmer credit-scoring business.
+
+5.5 Non-solicitation: for the same period, no founder shall solicit any employee earning more than KES 200,000 per month, or any customer of the Company.
+
+6. INFORMATION RIGHTS
+
+6.1 The Company shall deliver to the Investor:
+(a) monthly management accounts within twenty (20) days of month end;
+(b) quarterly KPI reports covering active farmers, gross merchandise value, loan book, and default rates, within thirty (30) days of quarter end;
+(c) audited annual accounts within one hundred and twenty (120) days of financial year end;
+(d) the annual budget at least thirty (30) days before the start of the financial year.
+
+6A. COVENANTS OF THE COMPANY
+
+6A.1 Key person insurance: within ninety (90) days of the date of this Agreement, the Company shall obtain life and critical illness insurance on the Founder in the amount of USD 500,000 and on the Co-Founder in the amount of USD 250,000, with the Company as beneficiary, and shall maintain it for so long as the Investor holds any shares.
+
+6A.2 Environmental, social and governance standards: the Company shall operate in accordance with the Investor's ESG policy annexed as Schedule 2, shall not engage in any activity on the Investor's exclusion list (including financing tobacco cultivation), shall ensure that no supplier or partner on its platform uses child labour, and shall report any serious environmental, social, or governance incident to the Investor within five (5) business days.
+
+6A.3 Anti-corruption: the Company and its directors shall comply with the Bribery Act, 2016 and the Anti-Corruption and Economic Crimes Act, 2003, and shall adopt an anti-bribery policy within sixty (60) days.
+
+6A.4 Data protection: the Company shall register with the Office of the Data Protection Commissioner and shall not share farmers' personal data with input suppliers or buyers except with the farmer's consent or as necessary to complete a transaction the farmer has requested.
+
+6A.5 Auditors: the Company shall appoint as auditors a firm approved by the Investor, and shall not change auditors without the Investor's consent.
+
+7. DEADLOCK
+
+7.1 A "Deadlock" arises if a Reserved Matter or Board resolution is put to two consecutive meetings and is not passed.
+
+7.2 In a Deadlock, the matter shall be referred to the chief executives of the Founder's and Investor's nominated advisers for resolution within fourteen (14) days, and failing resolution, to mediation under the rules of the Nairobi Centre for International Arbitration.
+
+7.3 If the Deadlock is not resolved within sixty (60) days of referral to mediation, either the Founder or the Investor may serve a Russian roulette notice offering to buy all the other's shares at a stated price, in which case the recipient must either sell at that price or buy the server's shares at the same price per share within thirty (30) days.
+
+7A. EXIT
+
+7A.1 The parties intend that the Company will pursue an exit, by a sale of the whole of its share capital or a listing on a recognised stock exchange, by 31 December 2031.
+
+7A.2 If no exit has been completed by that date, the Investor may require the Board to appoint an investment bank, selected by the Investor from a shortlist of three agreed by the Board, to run a sale process. The Founder and the Co-Founder shall cooperate in good faith with that process, subject to the drag-along terms in clause 4.4.
+
+7A.3 Redemption: if no exit has been completed by 31 December 2032, the Investor may require the Company to redeem its Series A Preference Shares at the original subscription price of USD 2.00 per share, to the extent the Company has distributable profits lawfully available for the purpose, in three equal annual instalments.
+
+7B. FOUNDER REMUNERATION
+
+7B.1 The Founder's gross salary shall not exceed USD 6,500 per month and the Co-Founder's shall not exceed USD 5,000 per month until the Company records twelve consecutive months of positive EBITDA, after which increases shall be approved by the Board, including the Investor Director.
+
+7B.2 Bonuses payable to the founders shall not exceed thirty per cent (30%) of annual salary and shall be linked to targets in the approved annual budget.
+
+8. CONFIDENTIALITY
+
+8.1 Each party shall keep confidential the terms of this Agreement and all information about the Company, save as required by law or to its professional advisers and, in the Investor's case, to its limited partners on a confidential basis.
+
+9. DISPUTE RESOLUTION AND GOVERNING LAW
+
+9.1 This Agreement is governed by the laws of Kenya.
+
+9.2 Disputes not resolved under clause 7 shall be finally resolved by arbitration in Nairobi under the rules of the Nairobi Centre for International Arbitration by three arbitrators.
+
+10. TERMINATION
+
+10.1 This Agreement terminates with respect to a shareholder when it ceases to hold shares, and terminates entirely upon a listing of the Company's shares on a recognised stock exchange or the winding up of the Company.
+
+11. WARRANTIES
+
+11.1 The Founder, the Co-Founder, and the Company jointly and severally warrant to the Investor, as at the date of this Agreement, that:
+(a) the Company is duly incorporated and has full power to carry on its business;
+(b) the Company's accounts for the year ended 31 December 2025 give a true and fair view of its financial position, and there has been no material adverse change since that date;
+(c) the Company owns or is licensed to use all intellectual property used in its business, including the source code of its mobile platform, and no founder or former contractor retains any rights in it;
+(d) the Company is not party to any litigation, and no litigation is threatened against it;
+(e) the Company has filed all tax returns and paid all taxes due, and is not liable for any penalty or interest to the Kenya Revenue Authority;
+(f) the Company has 38 employees, all of whom have written contracts of employment.
+
+11.2 Limitations: no claim may be brought under this clause unless notified within twenty-four (24) months of the date of this Agreement, save for tax claims, which may be notified within six (6) years. The aggregate liability of each founder under the warranties shall not exceed USD 300,000, and no claim may be brought unless the loss exceeds USD 25,000.
+
+12. COSTS
+
+12.1 The Company shall reimburse the Investor's reasonable legal and due diligence costs of the investment up to a cap of USD 45,000 on completion.
+
+SIGNED by the parties on the date first written above.
