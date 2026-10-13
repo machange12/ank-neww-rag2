@@ -110,7 +110,6 @@ async def chat_webhook(
 
     result = await run_chat(
         session_id=session["session_id"],
-        system_prefix=rbac["system_prompt_prefix"],
         chat_input=chat_input,
         user_client=user_client,
         user_id=ctx["user_id"],
@@ -150,7 +149,6 @@ async def chat_webhook_stream(
         # stream_chat yields raw token strings; wrap them as SSE 'data: ...' events
         async for token in stream_chat(
             session_id=session["session_id"],
-            system_prefix=rbac["system_prompt_prefix"],
             chat_input=chat_input,
             user_client=user_client,
             user_id=ctx["user_id"],

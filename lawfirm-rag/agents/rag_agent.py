@@ -23,9 +23,7 @@ from providers import make_chat_llm, get_embeddings
 
 logger = logging.getLogger(__name__)
 
-RAG_STREAM_TEMPLATE = """{system_prefix}
-
-You are a secure legal knowledge assistant for Anjarwalla & Khanna Advocates.
+RAG_STREAM_TEMPLATE = """You are a secure legal knowledge assistant for Anjarwalla & Khanna Advocates.
 
 CORE BEHAVIOUR RULES:
 1. Answer ONLY from the retrieved context below — never from general knowledge.
@@ -441,7 +439,6 @@ def _retrieval_query(chat_input: str, chat_history: list[Any]) -> str:
 
 async def run_chat(
     session_id: str,
-    system_prefix: str,
     chat_input: str,
     user_client: Any,
     user_id: str,
@@ -535,7 +532,6 @@ async def run_chat(
     # Build context from retrieved docs and inject into the system message.
     context = _build_context_string(docs)
     system_text = RAG_STREAM_TEMPLATE.format(
-        system_prefix=system_prefix,
         context=context,
     )
 
@@ -579,7 +575,6 @@ async def run_chat(
 
 async def stream_chat(
     session_id: str,
-    system_prefix: str,
     chat_input: str,
     user_client: Any,
     user_id: str,
@@ -641,7 +636,6 @@ async def stream_chat(
     # Build context string from retrieved docs and inject into system message
     context = _build_context_string(docs)
     system_text = RAG_STREAM_TEMPLATE.format(
-        system_prefix=system_prefix,
         context=context,
     )
 

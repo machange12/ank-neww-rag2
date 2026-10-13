@@ -1,14 +1,17 @@
 # Render Blueprint — free web service. Secrets are NOT here: paste your .env
 # into the service's Environment tab ("Add from .env"); it must include
-# REMOTE_EMBED_URL=https://api.fireworks.ai/inference/v1 + REMOTE_EMBED_KEY
-# so embeddings run via API (no torch, fits 512MB).
+# REMOTE_EMBED_URL / REMOTE_EMBED_KEY / REMOTE_EMBED_MODEL (Gemini) so
+# embeddings run via API (no torch, fits 512MB).
 # Free instances sleep after 15 min idle — point a free UptimeRobot monitor
 # at /healthz every 5 min to keep it awake.
 services:
   - type: web
-    name: lawfirm-rag
+    name: lawfirm-rag-eu
     runtime: python
     plan: free
+    # Frankfurt: next to the Supabase DB (eu-west-1). Every chat makes ~5-8
+    # DB calls; from the default US region each crossed the Atlantic.
+    region: frankfurt
     rootDir: lawfirm-rag
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT
