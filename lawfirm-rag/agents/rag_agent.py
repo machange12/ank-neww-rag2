@@ -31,14 +31,20 @@ CORE BEHAVIOUR RULES:
 1. Answer ONLY from the retrieved context below — never from general knowledge.
 2. For greetings or small talk: respond briefly without referencing the knowledge base.
 3. Cite sources with [Title | Matter ID] when referencing retrieved content.
-4. If the context is insufficient say: "I could not find an answer in the firm's document repository."
-5. Never speculate beyond the retrieved content.
+4. If the context does not answer the question, say: "I could not find an answer in the firm's document repository." Then ask ONE short follow-up question that would let you find it (e.g. the case name or parties, the matter ID, or the document type). If the context mentions documents that might be relevant, name them so the user can pick.
+5. If the question is ambiguous — it fits more than one document in the context (e.g. "the succession case" when there are several), or it refers to "the judge"/"the contract" with no earlier turn saying which — do not guess. Briefly list the candidates from the context and ask which one the user means.
+6. If you can answer only part of the question, answer that part, then say what is missing and ask a follow-up question about it.
+7. Never speculate beyond the retrieved content.
 
 RETRIEVED CONTEXT:
 {context}
 """
 
-NO_RESULT_RESPONSE = "I could not find an answer in the firm's document repository."
+NO_RESULT_RESPONSE = (
+    "I could not find an answer in the firm's document repository. "
+    "Could you give me a bit more to go on — the case name or parties, the matter ID, "
+    "or the type of document (judgment, contract, memo)?"
+)
 OUT_OF_SCOPE_RESPONSE = "This question is outside the scope of the firm's document repository."
 # Distinct from NO_RESULT_RESPONSE: relevant documents WERE found, but the
 # answer-generation call itself failed (rate limit, timeout, provider
@@ -384,6 +390,55 @@ def _log_retrieval(
     )
 
 
+class _TTLCache:
+    """Small in-process TTL cache (single Render instance, so no Redis)."""
+
+    def __init__(self, ttl: float, maxsize: int) -> None:
+        self.ttl, self.maxsize, self.data = ttl, maxsize, {}
+
+    def get(self, key: Any) -> Any:
+        hit = self.data.get(key)
+        if hit and time.monotonic() - hit[0] < self.ttl:
+            return hit[1]
+        self.data.pop(key, None)
+        return None
+
+    def put(self, key: Any, value: Any) -> None:
+        if len(self.data) >= self.maxsize:
+            self.data.pop(next(iter(self.data)))  # oldest insert
+        self.data[key] = (time.monotonic(), value)
+
+    def clear(self) -> None:
+        self.data.clear()
+
+
+# Repeat questions answer instantly. Keyed per user (RLS + role prompt make
+# answers user-specific) and on the conversation so far (follow-ups depend
+# on it). Cleared on ingest; TTL bounds staleness if ingest runs elsewhere.
+_ANSWER_CACHE = _TTLCache(ttl=600, maxsize=256)
+
+
+def clear_answer_cache() -> None:
+    _ANSWER_CACHE.clear()
+
+
+def _answer_cache_key(user_id: str, chat_input: str, chat_history: list[Any]) -> tuple:
+    norm = " ".join(chat_input.lower().split())
+    return (user_id, norm, tuple(str(getattr(m, "content", m)) for m in chat_history))
+
+
+def _retrieval_query(chat_input: str, chat_history: list[Any]) -> str:
+    """Search text for this turn. A short reply after an earlier question
+    ("the Ngeno one", "the 2025 judgment") usually answers the assistant's
+    follow-up question, so search on the previous question plus the reply."""
+    # ponytail: length heuristic; an LLM query-rewrite would catch long
+    # follow-ups too, at +1 call per turn.
+    if len(chat_input.split()) > 8:
+        return chat_input
+    previous = next((m.content for m in reversed(chat_history) if isinstance(m, HumanMessage)), "")
+    return f"{previous}\n{chat_input}" if previous else chat_input
+
+
 async def run_chat(
     session_id: str,
     system_prefix: str,
@@ -407,53 +462,9 @@ async def run_chat(
     t0 = time.perf_counter()
     llm = make_chat_llm(streaming=False)
 
-    intent = classify_intent(chat_input)
-    if intent["intent"] == "out_of_scope":
-        logger.info("out_of_scope query | session=%s | query=%r", session_id, chat_input)
-        return {"answer": OUT_OF_SCOPE_RESPONSE, "sources": []}
-
-    retriever, hybrid_retriever = _make_retriever(
-        user_client,
-        llm,
-        k=intent["retrieve_k"],
-        doc_type_filter=intent.get("doc_type_hint"),
-        use_multi_query=intent["intent"] in MULTI_QUERY_INTENTS,
-    )
-    docs: list[Any] = []
-    try:
-        # ainvoke: MultiQuery runs its rewritten queries concurrently.
-        docs = await retriever.ainvoke(chat_input)
-        if isinstance(docs, list):
-            _log_retrieval(
-                session_id=session_id,
-                query=chat_input,
-                docs=docs,
-                reranked=bool(settings.cohere_api_key),
-                intent=intent,
-                path=hybrid_retriever.last_path,
-            )
-    except Exception as exc:
-        # A retrieval-pipeline failure leads straight into the hallucination
-        # guard below (silent "no answer"), so this must be visible, not
-        # debug-level (which nothing captured before configure_logging()).
-        logger.warning("retrieval failed | session=%s | query=%r | %s", session_id, chat_input, exc, exc_info=True)
-
-    # Hallucination guard: never call the LLM when nothing was retrieved.
-    if not docs:
-        logger.info("zero-doc retrieval | session=%s | query=%r", session_id, chat_input)
-        return {"answer": NO_RESULT_RESPONSE, "sources": []}
-
-    sources = _sources_from_docs(docs)[:5]
-
-    # Build context from retrieved docs and inject into the system message.
-    context = _build_context_string(docs)
-    system_text = RAG_STREAM_TEMPLATE.format(
-        system_prefix=system_prefix,
-        context=context,
-    )
-
-    # Load recent history (Supabase-backed) so multi-turn context is preserved.
-    # Reads run through the caller's own client; RLS returns only their rows.
+    # Load recent history (Supabase-backed) first: it feeds the answer-cache
+    # key and the retrieval query for short follow-up replies. Reads run
+    # through the caller's own client; RLS returns only their rows.
     history = SupabaseChatHistory(
         session_id=session_id,
         client=user_client,
@@ -465,6 +476,68 @@ async def run_chat(
     except Exception as exc:  # noqa: BLE001
         logger.debug("history load failed: %s", exc)
         chat_history = []
+
+    def persist(answer: str) -> None:
+        # A persistence failure must not break the response.
+        try:
+            history.add_user_message(chat_input)
+            history.add_ai_message(answer)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("memory persistence failed: %s", exc)
+
+    cache_key = _answer_cache_key(user_id, chat_input, chat_history)
+    cached = _ANSWER_CACHE.get(cache_key)
+    if cached:
+        persist(cached["answer"])
+        logger.info("timing | session=%s | answer cache hit | total=%.2fs", session_id, time.perf_counter() - t0)
+        return cached
+
+    intent = classify_intent(chat_input)
+    if intent["intent"] == "out_of_scope":
+        logger.info("out_of_scope query | session=%s | query=%r", session_id, chat_input)
+        return {"answer": OUT_OF_SCOPE_RESPONSE, "sources": []}
+
+    retrieval_query = _retrieval_query(chat_input, chat_history)
+    retriever, hybrid_retriever = _make_retriever(
+        user_client,
+        llm,
+        k=intent["retrieve_k"],
+        doc_type_filter=intent.get("doc_type_hint"),
+        use_multi_query=intent["intent"] in MULTI_QUERY_INTENTS,
+    )
+    docs: list[Any] = []
+    try:
+        # ainvoke: MultiQuery runs its rewritten queries concurrently.
+        docs = await retriever.ainvoke(retrieval_query)
+        if isinstance(docs, list):
+            _log_retrieval(
+                session_id=session_id,
+                query=retrieval_query,
+                docs=docs,
+                reranked=bool(settings.cohere_api_key),
+                intent=intent,
+                path=hybrid_retriever.last_path,
+            )
+    except Exception as exc:
+        # A retrieval-pipeline failure leads straight into the hallucination
+        # guard below (silent "no answer"), so this must be visible, not
+        # debug-level (which nothing captured before configure_logging()).
+        logger.warning("retrieval failed | session=%s | query=%r | %s", session_id, retrieval_query, exc, exc_info=True)
+
+    # Hallucination guard: never call the LLM when nothing was retrieved.
+    if not docs:
+        logger.info("zero-doc retrieval | session=%s | query=%r", session_id, retrieval_query)
+        persist(NO_RESULT_RESPONSE)
+        return {"answer": NO_RESULT_RESPONSE, "sources": []}
+
+    sources = _sources_from_docs(docs)[:5]
+
+    # Build context from retrieved docs and inject into the system message.
+    context = _build_context_string(docs)
+    system_text = RAG_STREAM_TEMPLATE.format(
+        system_prefix=system_prefix,
+        context=context,
+    )
 
     messages: list[Any] = [SystemMessage(content=system_text)]
     messages.extend(chat_history)
@@ -492,13 +565,10 @@ async def run_chat(
         )
         answer = GENERATION_FAILED_RESPONSE
 
-    # Persist this turn (user + AI) to chat_memory. A failure must not break the
-    # response, so it is isolated in its own try/except.
-    try:
-        history.add_user_message(chat_input)
-        history.add_ai_message(answer)
-    except Exception as exc:  # noqa: BLE001
-        logger.debug("memory persistence failed: %s", exc)
+    persist(answer)
+    result = {"answer": answer, "sources": sources}
+    if answer and answer != GENERATION_FAILED_RESPONSE:
+        _ANSWER_CACHE.put(cache_key, result)
 
     logger.info(
         "timing | session=%s | retrieval+history=%.2fs | llm=%.2fs | total=%.2fs",

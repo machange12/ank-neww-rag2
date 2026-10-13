@@ -86,7 +86,8 @@ def _run_case(base_url: str, token: str, case: dict[str, Any]) -> dict[str, Any]
     sources = data.get("sources") or []
     returned_file_ids = {s.get("file_id") for s in sources if s.get("file_id")}
 
-    zero_result = answer.strip() in (NO_RESULT_RESPONSE, OUT_OF_SCOPE_RESPONSE)
+    # The no-result reply now continues with a follow-up question.
+    zero_result = answer.strip().startswith((NO_RESULT_RESPONSE, OUT_OF_SCOPE_RESPONSE))
 
     if expect_zero_result:
         # Negative case: passes exactly when the hallucination guard fired.

@@ -180,6 +180,10 @@ async def upsert_file(
         {"p_file_id": file_id, "p_before": reingest_cutoff},
     ).execute()
 
+    # Cached answers may now be stale (new/changed document).
+    from agents.rag_agent import clear_answer_cache
+    clear_answer_cache()
+
     # Upsert metadata record (includes content_hash + drive_modified_time to
     # enable unchanged-file detection)
     client.table("document_metadata").upsert({

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from functools import lru_cache
 from typing import Any, List
 
 from langchain_core.documents import Document
@@ -9,6 +10,18 @@ from postgrest_utils import response_data
 from providers import embed_prefixes, get_embeddings
 
 logger = logging.getLogger(__name__)
+
+
+@lru_cache(maxsize=1024)
+def _embed_query(text: str) -> tuple[float, ...]:
+    # Cached: embeddings depend only on the text (not the user), and the same
+    # query is embedded again by doc-type retries, repeat questions and
+    # MultiQuery's original-query pass — each a ~0.4s API call otherwise.
+    embedder = get_embeddings()
+    try:
+        return tuple(embedder.embed_query(text))
+    except Exception:
+        return tuple(embedder.embed_documents([text])[0])
 
 
 def hybrid_search(
@@ -28,16 +41,12 @@ def hybrid_search(
     by ``metadata->>'doc_type'``. Passing None preserves the existing behaviour.
     """
     try:
-        embedder = get_embeddings()
         # Model-specific task prefix (nomic wants "search_query: "; BGE-M3
         # and OpenAI want none). Must stay in sync with ingest/embed.py's
         # enrich_chunk — mismatched prefixes silently tank recall.
         query_prefix, _ = embed_prefixes()
         prefixed_query = f"{query_prefix}{query_text}"
-        try:
-            query_embedding = embedder.embed_query(prefixed_query)
-        except Exception:
-            query_embedding = embedder.embed_documents([prefixed_query])[0]
+        query_embedding = list(_embed_query(prefixed_query))
 
         # Call the Supabase RPC. The RPC is expected to return rows with
         # at least `content` and `metadata` columns to construct Documents.

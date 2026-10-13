@@ -2,14 +2,11 @@ import { useEffect, useState } from "react";
 import { sourcesFromResponse, parseJsonResponse } from "../lib/api";
 import { downloadText, safeParseJSON } from "../lib/format";
 
-const DEFAULT_QUERY =
-  "What are the notice requirements under Kenya's DPA for data breach disclosure?";
-
 // Research query/answer/sources, conversation session id, and local
 // History/Saved. `token` is only watched to reset the conversation session on
 // login/sign-out (both go through a token change) — it's not read directly.
 export function useChat({ apiFetch, token, authHeaders, setStatus, setActiveNav, setError, setNotice }) {
-  const [query, setQuery] = useState(DEFAULT_QUERY);
+  const [query, setQuery] = useState("");
   const [answer, setAnswer] = useState("");
   const [sources, setSources] = useState([]);
   const [activeSource, setActiveSource] = useState("rag");

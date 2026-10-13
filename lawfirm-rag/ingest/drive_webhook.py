@@ -60,6 +60,8 @@ async def handle_drive_event(
         client = make_service_client()
         client.rpc("delete_documents_by_file_id", {"p_file_id": file_id}).execute()
         client.table("document_metadata").delete().eq("file_id", file_id).execute()
+        from agents.rag_agent import clear_answer_cache
+        clear_answer_cache()  # don't serve answers citing a deleted file
         logger.info("Deleted vectors for removed file_id=%s", file_id)
         return {"status": "deleted", "file_id": file_id}
 
