@@ -28,7 +28,7 @@ RAG_STREAM_TEMPLATE = """You are a secure legal knowledge assistant for Anjarwal
 CORE BEHAVIOUR RULES:
 1. Answer ONLY from the retrieved context below — never from general knowledge.
 2. For greetings or small talk: respond briefly without referencing the knowledge base.
-3. Cite sources with [Title | Matter ID] when referencing retrieved content.
+3. Cite every statement drawn from the context with its source number in square brackets, e.g. [1] or [2][3], using ONLY the numbers shown in the RETRIEVED CONTEXT headers. Never cite file names, matter IDs or numbers that do not appear there.
 4. If the context does not answer the question, say: "I could not find an answer in the firm's document repository." Then ask ONE short follow-up question that would let you find it (e.g. the case name or parties, the matter ID, or the document type). If the context mentions documents that might be relevant, name them so the user can pick.
 5. If the question is ambiguous — it fits more than one document in the context (e.g. "the succession case" when there are several), or it refers to "the judge"/"the contract" with no earlier turn saying which — do not guess. Briefly list the candidates from the context and ask which one the user means.
 6. If you can answer only part of the question, answer that part, then say what is missing and ask a follow-up question about it.
@@ -298,23 +298,48 @@ def _make_retriever(
     return multi_retriever, hybrid_retriever
 
 
-def _build_context_string(docs: list[Any]) -> str:
-    """Build a formatted context string from retrieved documents to inject into the prompt."""
+def _doc_key(meta: dict[str, Any]) -> str:
+    """One key per source document, shared by the context numbering and the
+    sources list so citation [n] always means sources[n-1]."""
+    return meta.get("file_id") or meta.get("url") or meta.get("file_url") or meta.get("file_title") or meta.get("title") or ""
+
+
+def _build_context_string(docs: list[Any], sources: list[dict[str, Any]]) -> str:
+    """Context for the prompt. Chunks are labelled with their SOURCE number
+    (several chunks of one document share a number), matching the numbered
+    sources list the user sees."""
     if not docs:
         return "No relevant documents found."
+    number = {s["key"]: s["n"] for s in sources}
     parts = []
-    for i, doc in enumerate(docs, 1):
+    for doc in docs:
         meta = getattr(doc, "metadata", {}) or {}
-        title = meta.get("file_title") or meta.get("title") or "Unknown document"
-        matter_id = meta.get("matter_id", "")
-        section = meta.get("section_heading", "")
-        header = f"[{i}] {title}"
-        if matter_id:
-            header += f" | Matter: {matter_id}"
-        if section:
-            header += f" | {section}"
+        source = sources[number.get(_doc_key(meta), 1) - 1]
+        header = f"[{source['n']}] {source['title']}"
+        if meta.get("matter_id"):
+            header += f" | Matter: {meta['matter_id']}"
+        if meta.get("section_heading"):
+            header += f" | {meta['section_heading']}"
         parts.append(f"{header}\n{doc.page_content}")
     return "\n\n---\n\n".join(parts)
+
+
+_CITATION = re.compile(r"\[(\d+)\]")
+
+
+def _strip_invalid_citations(answer: str, n_sources: int) -> tuple[str, int]:
+    """Remove citation markers that point at no source ([7] when there are 3).
+    Returns the cleaned answer and how many were removed."""
+    removed = 0
+
+    def keep(m: re.Match[str]) -> str:
+        nonlocal removed
+        if 1 <= int(m[1]) <= n_sources:
+            return m[0]
+        removed += 1
+        return ""
+
+    return _CITATION.sub(keep, answer), removed
 
 
 # Definite references that presuppose the user has ONE document in mind.
@@ -396,16 +421,18 @@ def _sources_from_docs(docs: list[Any]) -> list[dict[str, Any]]:
     for doc in docs:
         meta = getattr(doc, "metadata", {}) or {}
         url = meta.get("url") or meta.get("file_url", "")
-        title = meta.get("file_title") or meta.get("title") or "Unknown document"
-        file_id = meta.get("file_id", "")
-        key = file_id or url or title
+        raw_title = meta.get("file_title") or meta.get("title") or "Unknown document"
+        key = _doc_key(meta)
         if not key or key in seen:
             continue
         seen.add(key)
         sources.append({
-            "title": title,
+            "n": len(sources) + 1,  # the [n] the answer cites
+            "key": key,
+            "title": _pretty_title(raw_title),
+            "file_title": raw_title,
             "url": url,
-            "file_id": file_id,
+            "file_id": meta.get("file_id", ""),
             "section_heading": meta.get("section_heading", "") or "",
             "chunk_index": meta.get("chunk_index", 0) or 0,
             "page_number": meta.get("page_number", 0) or 0,
@@ -588,7 +615,7 @@ async def _prepare_turn(
         persist(NO_RESULT_RESPONSE)
         return {"final": {"answer": NO_RESULT_RESPONSE, "sources": []}}
 
-    sources = _sources_from_docs(docs)[:5]
+    sources = _sources_from_docs(docs)
 
     # First turn that says "the judge"/"the contract" without naming which,
     # while the hits span several documents: ask instead of guessing. Later
@@ -601,7 +628,7 @@ async def _prepare_turn(
             logger.info("timing | session=%s | clarifying question | total=%.2fs", session_id, time.perf_counter() - t0)
             return {"final": {"answer": clarify, "sources": sources}}
 
-    system_text = RAG_STREAM_TEMPLATE.format(context=_build_context_string(docs))
+    system_text = RAG_STREAM_TEMPLATE.format(context=_build_context_string(docs, sources))
     messages: list[Any] = [SystemMessage(content=system_text), *chat_history, HumanMessage(content=chat_input)]
     return {
         "messages": messages,
@@ -614,6 +641,9 @@ async def _prepare_turn(
 
 
 def _finish_turn(session_id: str, turn: dict[str, Any], answer: str) -> dict[str, Any]:
+    answer, bad = _strip_invalid_citations(answer, len(turn["sources"]))
+    if bad:
+        logger.warning("invalid citations removed | session=%s | count=%d", session_id, bad)
     turn["persist"](answer)
     result = {"answer": answer, "sources": turn["sources"]}
     if answer and answer != GENERATION_FAILED_RESPONSE:

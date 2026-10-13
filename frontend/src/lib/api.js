@@ -19,6 +19,7 @@ export function sourcesFromResponse(rawSources) {
   }
   return rawSources.map((source, index) => ({
     id: source.file_id || source.url || `source-${index}`,
+    n: source.n || index + 1, // the [n] the answer cites
     title: source.title || "Unknown document",
     meta: source.section_heading || (source.file_id ? `File: ${source.file_id}` : "Retrieved document"),
     url: source.url || "",

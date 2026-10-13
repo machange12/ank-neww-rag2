@@ -207,6 +207,7 @@ export default function ANKRagDashboard() {
                   >
                     <div className="flex items-center justify-between gap-2">
                       <div className={`truncate text-xs font-medium ${chat.activeSource === source.id ? "text-blue-700" : "text-gray-800"}`}>
+                        <span className="mr-1 text-gray-400">[{source.n}]</span>
                         {source.title}
                       </div>
                       <ExternalLink
