@@ -35,15 +35,42 @@ export function useChat({ apiFetch, token, authHeaders, setStatus, setActiveNav,
       // Send back the session id the server minted on the previous turn so
       // the backend continues the same conversation (and loads prior turns
       // as chat history) instead of starting a fresh session every request.
-      const response = await apiFetch("/lawfirm-chat-trigger-006", {
+      const response = await apiFetch("/lawfirm-chat-stream", {
         method: "POST",
         headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({ chatInput: query, ...(sessionId ? { sessionId } : {}) }),
       });
-      const data = await parseJsonResponse(response, "RAG request failed");
-      if (!response.ok) throw new Error(data.error || data.detail || "RAG request failed");
-      const output = data.output || "";
-      const responseSources = sourcesFromResponse(data.sources);
+      if (!response.ok) {
+        const data = await parseJsonResponse(response, "RAG request failed");
+        throw new Error(data.error || data.detail || "RAG request failed");
+      }
+      // Server-Sent Events: one JSON object per "data:" line — session id
+      // first, then answer tokens (shown as they arrive), then sources.
+      let output = "";
+      let rawSources = [];
+      setAnswer("");
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const events = buffer.split("\n\n");
+        buffer = events.pop();
+        for (const raw of events) {
+          if (!raw.startsWith("data: ") || raw === "data: [DONE]") continue;
+          const event = JSON.parse(raw.slice(6));
+          if (event.type === "session") setSessionId(event.session_id);
+          else if (event.type === "sources") rawSources = event.sources;
+          else if (event.type === "token") {
+            if (!output) setStatus("Writing answer");
+            output += event.text;
+            setAnswer(output);
+          }
+        }
+      }
+      const responseSources = sourcesFromResponse(rawSources);
       const latency = ((performance.now() - started) / 1000).toFixed(1);
       const item = {
         id: crypto.randomUUID(),
@@ -60,7 +87,6 @@ export function useChat({ apiFetch, token, authHeaders, setStatus, setActiveNav,
       setSources(responseSources);
       setActiveSource(responseSources[0]?.id || "rag");
       setLastLatency(latency);
-      if (data.session_id) setSessionId(data.session_id);
       setStatus("Answer ready");
       setActiveNav("Research");
     } catch (err) {

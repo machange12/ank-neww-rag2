@@ -1,6 +1,7 @@
 """Chat, streaming chat, feedback, and session-history endpoints."""
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from fastapi import APIRouter, Header, HTTPException, Request
@@ -146,22 +147,27 @@ async def chat_webhook_stream(
         raise HTTPException(status_code=400, detail="BAD_REQUEST: missing chat input")
 
     async def event_stream():
-        # stream_chat yields raw token strings; wrap them as SSE 'data: ...' events
-        async for token in stream_chat(
+        # Every event is one JSON object per SSE 'data:' line, so tokens that
+        # contain newlines can't break the framing. The session id goes first
+        # so the client can continue the conversation on the next turn.
+        yield f"data: {json.dumps({'type': 'session', 'session_id': session['session_id']})}\n\n"
+        async for event in stream_chat(
             session_id=session["session_id"],
             chat_input=chat_input,
             user_client=user_client,
             user_id=ctx["user_id"],
             tenant_id=session.get("tenant_id"),
         ):
-            token_text = str(token)
-            if token_text.startswith("data: "):
-                yield token_text
-            else:
-                yield f"data: {token_text}\n\n"
+            yield f"data: {json.dumps(event)}\n\n"
         yield "data: [DONE]\n\n"
 
-    return StreamingResponse(event_stream(), media_type="text/event-stream")
+    # X-Accel-Buffering: stop proxies (Render's included) from holding the
+    # stream until it ends, which would defeat streaming.
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.post("/feedback", status_code=201)

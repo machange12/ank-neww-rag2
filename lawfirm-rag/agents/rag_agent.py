@@ -503,27 +503,21 @@ def _retrieval_query(chat_input: str, chat_history: list[Any]) -> str:
     return f"{previous}\n{chat_input}" if previous else chat_input
 
 
-async def run_chat(
+async def _prepare_turn(
     session_id: str,
     chat_input: str,
     user_client: Any,
     user_id: str,
-    tenant_id: str | None = None,
+    tenant_id: str | None,
+    llm: Any,
 ) -> dict[str, Any]:
-    """
-    Run one turn of the RAG chat.
+    """Everything before answer generation, shared by run_chat and stream_chat.
 
-    - Classifies query intent to choose the retrieval depth (or short-circuits).
-    - Retrieves via hybrid_search_rls (if present) with RLS; falls back to vector
-      similarity, then reranks with Cohere when COHERE_API_KEY is set.
-    - Injects the retrieved context directly into the system prompt and generates
-      the answer with a single LLM call (no multi-tool-call agent loop, which was
-      prone to re-writing the query with junk and giving up).
-    - Persists the turn to the Supabase chat_memory table through the caller's
-      own client (RLS-enforced ownership; ``user_id`` is stamped on each row).
+    Returns {"final": {...}} when the turn is answered without the LLM (cache
+    hit, out of scope, nothing retrieved, clarifying question), otherwise
+    {"messages", "sources", "cache_key", "persist", "t0", "t_retrieved"}.
     """
     t0 = time.perf_counter()
-    llm = make_chat_llm(streaming=False)
 
     # Load recent history (Supabase-backed) first: it feeds the answer-cache
     # key and the retrieval query for short follow-up replies. Reads run
@@ -553,12 +547,12 @@ async def run_chat(
     if cached:
         persist(cached["answer"])
         logger.info("timing | session=%s | answer cache hit | total=%.2fs", session_id, time.perf_counter() - t0)
-        return cached
+        return {"final": cached}
 
     intent = classify_intent(chat_input)
     if intent["intent"] == "out_of_scope":
         logger.info("out_of_scope query | session=%s | query=%r", session_id, chat_input)
-        return {"answer": OUT_OF_SCOPE_RESPONSE, "sources": []}
+        return {"final": {"answer": OUT_OF_SCOPE_RESPONSE, "sources": []}}
 
     retrieval_query = _retrieval_query(chat_input, chat_history)
     retriever, hybrid_retriever = _make_retriever(
@@ -585,15 +579,14 @@ async def run_chat(
             )
     except Exception as exc:
         # A retrieval-pipeline failure leads straight into the hallucination
-        # guard below (silent "no answer"), so this must be visible, not
-        # debug-level (which nothing captured before configure_logging()).
+        # guard below (silent "no answer"), so this must be visible.
         logger.warning("retrieval failed | session=%s | query=%r | %s", session_id, retrieval_query, exc, exc_info=True)
 
     # Hallucination guard: never call the LLM when nothing was retrieved.
     if not docs:
         logger.info("zero-doc retrieval | session=%s | query=%r", session_id, retrieval_query)
         persist(NO_RESULT_RESPONSE)
-        return {"answer": NO_RESULT_RESPONSE, "sources": []}
+        return {"final": {"answer": NO_RESULT_RESPONSE, "sources": []}}
 
     sources = _sources_from_docs(docs)[:5]
 
@@ -606,50 +599,65 @@ async def run_chat(
         if clarify:
             persist(clarify)
             logger.info("timing | session=%s | clarifying question | total=%.2fs", session_id, time.perf_counter() - t0)
-            return {"answer": clarify, "sources": sources}
+            return {"final": {"answer": clarify, "sources": sources}}
 
-    # Build context from retrieved docs and inject into the system message.
-    context = _build_context_string(docs)
-    system_text = RAG_STREAM_TEMPLATE.format(
-        context=context,
-    )
+    system_text = RAG_STREAM_TEMPLATE.format(context=_build_context_string(docs))
+    messages: list[Any] = [SystemMessage(content=system_text), *chat_history, HumanMessage(content=chat_input)]
+    return {
+        "messages": messages,
+        "sources": sources,
+        "cache_key": cache_key,
+        "persist": persist,
+        "t0": t0,
+        "t_retrieved": time.perf_counter(),
+    }
 
-    messages: list[Any] = [SystemMessage(content=system_text)]
-    messages.extend(chat_history)
-    messages.append(HumanMessage(content=chat_input))
 
-    t_retrieved = time.perf_counter()
-    answer = ""
-    try:
-        response = await asyncio.to_thread(llm.invoke, messages)
-        answer = getattr(response, "content", "") or ""
-    except Exception as exc:  # noqa: BLE001
-        # Distinct from the zero-doc guard above: retrieval succeeded (docs
-        # is non-empty here), the LLM call itself failed — e.g. a provider
-        # rate limit (confirmed: Groq's on_demand-tier TPM cap rejecting
-        # requests once retrieved context pushes the prompt over its
-        # per-minute token budget). Answering NO_RESULT_RESPONSE here would
-        # make a rate-limited/outage request indistinguishable from a query
-        # with genuinely no matching documents.
-        logger.error(
-            "LLM generation failed | session=%s | query=%r | docs_retrieved=%d | %s",
-            session_id,
-            chat_input,
-            len(docs),
-            exc,
-        )
-        answer = GENERATION_FAILED_RESPONSE
-
-    persist(answer)
-    result = {"answer": answer, "sources": sources}
+def _finish_turn(session_id: str, turn: dict[str, Any], answer: str) -> dict[str, Any]:
+    turn["persist"](answer)
+    result = {"answer": answer, "sources": turn["sources"]}
     if answer and answer != GENERATION_FAILED_RESPONSE:
-        _ANSWER_CACHE.put(cache_key, result)
-
+        _ANSWER_CACHE.put(turn["cache_key"], result)
+    now = time.perf_counter()
     logger.info(
         "timing | session=%s | retrieval+history=%.2fs | llm=%.2fs | total=%.2fs",
-        session_id, t_retrieved - t0, time.perf_counter() - t_retrieved, time.perf_counter() - t0,
+        session_id, turn["t_retrieved"] - turn["t0"], now - turn["t_retrieved"], now - turn["t0"],
     )
-    return {"answer": answer, "sources": sources}
+    return result
+
+
+async def run_chat(
+    session_id: str,
+    chat_input: str,
+    user_client: Any,
+    user_id: str,
+    tenant_id: str | None = None,
+) -> dict[str, Any]:
+    """
+    Run one turn of the RAG chat and return the whole answer.
+
+    Retrieval (hybrid_search_rls under the caller's RLS, multi-query for broad
+    intents, Cohere rerank), the answer cache, clarifying questions and
+    history persistence all live in _prepare_turn/_finish_turn, shared with
+    stream_chat. One LLM call generates the answer from the retrieved context
+    (no multi-tool-call agent loop, which was prone to re-writing the query
+    with junk and giving up).
+    """
+    llm = make_chat_llm(streaming=False)
+    turn = await _prepare_turn(session_id, chat_input, user_client, user_id, tenant_id, llm)
+    if "final" in turn:
+        return turn["final"]
+    try:
+        response = await asyncio.to_thread(llm.invoke, turn["messages"])
+        answer = getattr(response, "content", "") or ""
+    except Exception as exc:  # noqa: BLE001
+        # Distinct from the zero-doc guard: retrieval succeeded, the LLM call
+        # itself failed (rate limit, timeout, outage). Answering
+        # NO_RESULT_RESPONSE here would make an outage look like "no
+        # matching documents".
+        logger.error("LLM generation failed | session=%s | query=%r | %s", session_id, chat_input, exc)
+        answer = GENERATION_FAILED_RESPONSE
+    return _finish_turn(session_id, turn, answer)
 
 
 async def stream_chat(
@@ -660,119 +668,31 @@ async def stream_chat(
     tenant_id: str | None = None,
 ):
     """
-    Async generator that yields tokens from the LLM as they arrive.
-
-    - Classifies query intent to choose retrieval depth (or short-circuits).
-    - Retrieved docs are built into a context string and injected into the
-      system message before streaming (no ungrounded answers).
-    - Short-circuits on zero-doc retrieval with the canned no-result response.
-    - Persists the full turn to the same chat_memory table run_chat() uses
-      once streaming completes, through the caller's own client (RLS-enforced
-      ownership); a memory write failure never breaks the stream.
+    Same turn as run_chat, streamed. Yields events:
+      {"type": "token", "text": ...}  (many; a non-LLM answer arrives as one)
+      {"type": "sources", "sources": [...]}  (last)
+    The full answer is persisted and cached once streaming completes, even
+    if the stream fails part-way (a partial answer is still useful context
+    for the next turn).
     """
     llm = make_chat_llm(streaming=True)
-
-    intent = classify_intent(chat_input)
-    if intent["intent"] == "out_of_scope":
-        logger.info("out_of_scope query | session=%s | query=%r", session_id, chat_input)
-        yield OUT_OF_SCOPE_RESPONSE
-        yield f"data: {json.dumps({'type': 'sources', 'sources': []})}\n\n"
+    turn = await _prepare_turn(session_id, chat_input, user_client, user_id, tenant_id, llm)
+    if "final" in turn:
+        yield {"type": "token", "text": turn["final"]["answer"]}
+        yield {"type": "sources", "sources": turn["final"]["sources"]}
         return
 
-    retriever, hybrid_retriever = _make_retriever(
-        user_client,
-        llm,
-        k=intent["retrieve_k"],
-        # No doc-type filter: labels come from an LLM classifier that can
-        # fail (stored as "unknown"), and a filter then hides the right
-        # document. Unfiltered hybrid scored 100% hit@1 on the golden set.
-        use_multi_query=intent["intent"] in MULTI_QUERY_INTENTS,
-    )
-    docs: list[Any] = []
-    sources: list[dict[str, Any]] = []
-
+    parts: list[str] = []
     try:
-        # ainvoke: MultiQuery runs its rewritten queries concurrently.
-        docs = await retriever.ainvoke(chat_input)
-        if isinstance(docs, list):
-            _log_retrieval(
-                session_id=session_id,
-                query=chat_input,
-                docs=docs,
-                reranked=bool(settings.cohere_api_key),
-                intent=intent,
-                path=hybrid_retriever.last_path,
-            )
-            sources = _sources_from_docs(docs)[:5]
-    except Exception as exc:
-        logger.warning("streaming retrieval failed | session=%s | query=%r | %s", session_id, chat_input, exc, exc_info=True)
-
-    # Hallucination guard: never call the LLM when nothing was retrieved.
-    if not docs:
-        logger.info("zero-doc retrieval | session=%s | query=%r", session_id, chat_input)
-        yield NO_RESULT_RESPONSE
-        yield f"data: {json.dumps({'type': 'sources', 'sources': []})}\n\n"
-        return
-
-    # Build context string from retrieved docs and inject into system message
-    context = _build_context_string(docs)
-    system_text = RAG_STREAM_TEMPLATE.format(
-        context=context,
-    )
-
-    sys_msg = SystemMessage(content=system_text)
-    human_msg = HumanMessage(content=chat_input)
-
-    tokens_buffer: list[str] = []
-    stream_failed = False
-    try:
-        async for token in llm.astream([sys_msg, human_msg]):
-            token_content = getattr(token, "content", token)
-            tokens_buffer.append(str(token_content))
-            yield token_content
-    except Exception as exc:
-        # Same distinction as run_chat(): docs were retrieved, the LLM call
-        # itself failed (rate limit, timeout, provider outage). Was logged at
-        # debug level (never reached any log output — nothing in this
-        # codebase called logging.basicConfig()/dictConfig() at the time) and
-        # silently dropped the client with no explanation. If no tokens made
-        # it out before the failure, surface a distinct message instead of
-        # leaving the client with an empty/truncated answer that looks
-        # identical to a zero-doc "no result" case.
-        logger.error(
-            "streaming LLM generation failed | session=%s | query=%r | docs_retrieved=%d | %s",
-            session_id,
-            chat_input,
-            len(docs),
-            exc,
-        )
-        stream_failed = True
-        if not tokens_buffer:
-            yield GENERATION_FAILED_RESPONSE
-            tokens_buffer.append(GENERATION_FAILED_RESPONSE)
-
-    # Persist this turn to chat_memory (same table + format as run_chat()),
-    # even when the stream failed partway through — a partial answer is still
-    # useful conversational context for the next turn, and the alternative
-    # (dropping the turn entirely) silently breaks multi-turn continuity.
-    # A persistence failure must never break the stream or drop the sources
-    # event, so it is isolated in its own try/except.
-    try:
-        assembled_response = "".join(tokens_buffer)
-        if assembled_response:
-            history = SupabaseChatHistory(
-                session_id=session_id,
-                client=user_client,
-                user_id=user_id,
-                tenant_id=tenant_id,
-            )
-            history.add_user_message(chat_input)
-            history.add_ai_message(assembled_response)
+        async for chunk in llm.astream(turn["messages"]):
+            text = str(getattr(chunk, "content", chunk) or "")
+            if text:
+                parts.append(text)
+                yield {"type": "token", "text": text}
     except Exception as exc:  # noqa: BLE001
-        logger.debug("streaming memory persistence failed: %s", exc)
-
-    # Send the sources event even on a failed generation: retrieval genuinely
-    # found these documents (that's the whole point of GENERATION_FAILED_RESPONSE
-    # vs. NO_RESULT_RESPONSE above), so the client should still see them rather
-    # than silently losing the "sources retrieved" panel on a rate-limit/outage.
-    yield f"data: {json.dumps({'type': 'sources', 'sources': sources})}\n\n"
+        logger.error("streaming LLM generation failed | session=%s | query=%r | %s", session_id, chat_input, exc)
+        if not parts:
+            parts.append(GENERATION_FAILED_RESPONSE)
+            yield {"type": "token", "text": GENERATION_FAILED_RESPONSE}
+    result = _finish_turn(session_id, turn, "".join(parts))
+    yield {"type": "sources", "sources": result["sources"]}
