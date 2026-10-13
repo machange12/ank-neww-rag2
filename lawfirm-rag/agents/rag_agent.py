@@ -317,6 +317,63 @@ def _build_context_string(docs: list[Any]) -> str:
     return "\n\n---\n\n".join(parts)
 
 
+# Definite references that presuppose the user has ONE document in mind.
+_DEFINITE_REF = re.compile(
+    r"\b(the|this|that)\s+(judge|court|case|contract|agreement|petitioner|applicant|respondent|"
+    r"appellant|parties|party|matter|ruling|judgment|lease|deceased|plaintiff|defendant|accused|"
+    r"tenant|landlord|employee|employer|client|letter|affidavit|policy|nda|grant|appeal)\b",
+    re.I,
+)
+# Title words too common to identify a document on their own.
+_GENERIC_TITLE_WORDS = {
+    "the", "and", "of", "estate", "agreement", "case", "policy", "judgment", "judgments", "republic",
+    "court", "high", "civil", "supreme", "letter", "client", "legal", "doc", "pdf", "docx", "kehc", "kesc", "keca",
+}
+_KEEP_LOWER = {"v", "of", "the", "and", "in", "re"}
+
+
+def _pretty_title(file_title: str) -> str:
+    """"Judgments/2026-kehc-12951-mutunga-v-republic.pdf" -> "Mutunga v Republic [2026 KEHC 12951]",
+    "08_Commercial_Lease_Agreement.docx" -> "Commercial Lease Agreement"."""
+    name = re.sub(r"\.\w+$", "", file_title.rsplit("/", 1)[-1])
+    cite = ""
+    m = re.match(r"(\d{4})-([a-z]+)-(\d+)-(.+)", name)
+    if m:
+        cite, name = f" [{m[1]} {m[2].upper()} {m[3]}]", m[4]
+    name = re.sub(r"^(doc)?\d+_", "", name)
+    words = [w for w in re.split(r"[-_\s]+", name) if w and not re.fullmatch(r"\(\d+\)", w)]
+    words = [w if w.lower() in _KEEP_LOWER else (w.upper() if len(w) <= 3 else w.capitalize()) for w in words]
+    return " ".join(words) + cite
+
+
+def _clarifying_question(query: str, docs: list[Any]) -> str | None:
+    """Ask which document is meant instead of guessing, when the question
+    points at one specific document ("the judge", "the contract") without
+    naming it and the search hits several. Deterministic: the LLM, given
+    mostly-one-document context, reliably guessed instead of asking.
+    """
+    # ponytail: keyword heuristic (definite reference + title-word overlap).
+    # Misses unnamed paraphrases; over-asks if a party is named only by a
+    # word absent from the file name. Upgrade: let the LLM decide with a
+    # stronger prompt once a labelled ambiguity set exists.
+    if not _DEFINITE_REF.search(query):
+        return None
+    candidates: dict[str, None] = {}
+    for doc in docs:
+        title = (getattr(doc, "metadata", {}) or {}).get("file_title") or ""
+        if title:
+            candidates.setdefault(_pretty_title(title), None)
+    if len(candidates) < 2:
+        return None
+    query_words = set(re.findall(r"[a-z0-9]+", query.lower()))
+    for title in candidates:
+        title_words = set(re.findall(r"[a-z0-9]+", title.lower())) - _GENERIC_TITLE_WORDS
+        if {w for w in title_words if len(w) >= 3} & query_words:
+            return None  # the question names one of the documents
+    listed = "\n".join(f"- {t}" for t in list(candidates)[:5])
+    return f"Your question could refer to more than one document:\n{listed}\n\nWhich one do you mean?"
+
+
 def _sources_from_docs(docs: list[Any]) -> list[dict[str, Any]]:
     """Build source dicts with title/url/file_id plus chunk-level citation fields.
 
@@ -528,6 +585,17 @@ async def run_chat(
         return {"answer": NO_RESULT_RESPONSE, "sources": []}
 
     sources = _sources_from_docs(docs)[:5]
+
+    # First turn that says "the judge"/"the contract" without naming which,
+    # while the hits span several documents: ask instead of guessing. Later
+    # turns have history to disambiguate, and broad intents (comparisons,
+    # summaries) legitimately span documents.
+    if not chat_history and intent["intent"] in ("factual", "procedural"):
+        clarify = _clarifying_question(chat_input, docs)
+        if clarify:
+            persist(clarify)
+            logger.info("timing | session=%s | clarifying question | total=%.2fs", session_id, time.perf_counter() - t0)
+            return {"answer": clarify, "sources": sources}
 
     # Build context from retrieved docs and inject into the system message.
     context = _build_context_string(docs)
