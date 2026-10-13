@@ -23,7 +23,11 @@ SENSITIVITY_MARKERS: list[tuple[int, re.Pattern[str]]] = [
         5,
         re.compile(
             r"(?i)\b(attorney-client\s*privilege|legally\s*privileged"
-            r"|privileged\s*and\s*confidential|without\s*prejudice)\b"
+            # "WITHOUT PREJUDICE" marks privileged settlement correspondence;
+            # "without prejudice to X" just means "without affecting X" and is
+            # routine in judgments and contracts, so it must not lock a
+            # document at level 5.
+            r"|privileged\s*and\s*confidential|without\s*prejudice(?!\s+to\b))\b"
         ),
     ),
     (

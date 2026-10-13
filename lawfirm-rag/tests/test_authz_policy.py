@@ -138,3 +138,12 @@ def test_classify_upload_requested_level_is_never_an_authority_fact():
     assert decision.access_level == 1
     assert decision.ceiling == 4
     assert decision.requested_access_level == 5
+
+def test_without_prejudice_marking_vs_phrase():
+    from authz.policy import sensitivity_floor
+
+    assert sensitivity_floor("WITHOUT PREJUDICE SAVE AS TO COSTS\nDear Sirs, our client offers...") == 5
+    assert sensitivity_floor("Without Prejudice\n\nSettlement proposal") == 5
+    # Ordinary judgment / contract wording must not lock the document at level 5.
+    assert sensitivity_floor("The claim is struck out, without prejudice to the Claimant's right to sue.") == 1
+    assert sensitivity_floor("This clause applies without prejudice to clause 7.") == 1
