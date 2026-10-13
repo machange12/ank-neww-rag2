@@ -66,10 +66,12 @@ export function useChat({ apiFetch, token, authHeaders, setStatus, setActiveNav,
           else if (event.type === "token") {
             if (!output) setStatus("Writing answer");
             output += event.text;
-            setAnswer(output);
+            // gpt-oss sometimes writes 【1†L1-L3】 instead of [1]; show [1].
+            setAnswer(output.replace(/【\s*(\d+)(?:†[^】]*)?\s*】/g, "[$1]"));
           }
         }
       }
+      output = output.replace(/【\s*(\d+)(?:†[^】]*)?\s*】/g, "[$1]");
       const responseSources = sourcesFromResponse(rawSources);
       const latency = ((performance.now() - started) / 1000).toFixed(1);
       const item = {

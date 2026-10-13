@@ -118,7 +118,7 @@ def grade(cases, results, out) -> None:
     rows = []
     for c in cases:
         r = results[c["query"]]
-        ans, ctx = r["answer"], r.get("context", "")
+        ans, ctx = ra._normalize_citations(r["answer"]), r.get("context", "")
         gold_figs = figures(c["answer"])
         ans_figs = figures(ans)
         cited = {int(n) for n in re.findall(r"\[(\d+)\]", ans)}
@@ -185,6 +185,7 @@ async def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", type=Path, default=Path("eval_answers_results.json"))
     ap.add_argument("--limit", type=int, default=0)
+    ap.add_argument("--grade-only", action="store_true", help="grade saved answers only (no answering calls)")
     args = ap.parse_args()
 
     cases = [c for c in json.loads(GOLDEN.read_text(encoding="utf-8")) if c["file"]]
@@ -192,6 +193,9 @@ async def main() -> None:
         cases = cases[: args.limit]
     results = json.loads(args.out.read_text(encoding="utf-8")) if args.out.exists() else {}
 
+    if args.grade_only:
+        grade([c for c in cases if c["query"] in results], results, args.out)
+        return
     anon = create_client(settings.supabase_url, settings.supabase_anon_key)
     session = anon.auth.sign_in_with_password({"email": os.environ["EVAL_EMAIL"], "password": os.environ["EVAL_PASSWORD"]}).session
     print("Phase 1: answering")

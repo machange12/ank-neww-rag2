@@ -200,14 +200,15 @@ class _FailOpenRerank(BaseDocumentCompressor):
         arbitrary_types_allowed = True
 
     def compress_documents(self, documents, query, callbacks=None):
-        if time.monotonic() < self.skip_until:
-            return list(documents)[: self.top_n]
-        try:
-            return self.inner.compress_documents(documents, query, callbacks=callbacks)
-        except Exception as exc:  # noqa: BLE001
-            self.skip_until = time.monotonic() + 120
-            logger.warning("reranker failed, using unreranked RRF order for 120s | %s", exc)
-            return list(documents)[: self.top_n]
+        documents = list(documents)
+        ranked = documents[: self.top_n]
+        if time.monotonic() >= self.skip_until:
+            try:
+                ranked = list(self.inner.compress_documents(documents, query, callbacks=callbacks))
+            except Exception as exc:  # noqa: BLE001
+                self.skip_until = time.monotonic() + 120
+                logger.warning("reranker failed, using unreranked RRF order for 120s | %s", exc)
+        return _prefer_named_document(query, documents, ranked, self.top_n)
 
 
 @lru_cache(maxsize=1)
@@ -325,6 +326,13 @@ def _build_context_string(docs: list[Any], sources: list[dict[str, Any]]) -> str
 
 
 _CITATION = re.compile(r"\[(\d+)\]")
+# gpt-oss often emits its native citation style 【1】 / 【1†L1-L3】 instead of
+# the [1] the prompt asks for.
+_NATIVE_CITATION = re.compile(r"【\s*(\d+)(?:†[^】]*)?\s*】")
+
+
+def _normalize_citations(answer: str) -> str:
+    return _NATIVE_CITATION.sub(r"[\1]", answer)
 
 
 def _strip_invalid_citations(answer: str, n_sources: int) -> tuple[str, int]:
@@ -373,6 +381,40 @@ def _pretty_title(file_title: str) -> str:
     return " ".join(words) + cite
 
 
+def _query_names_title(query: str, pretty_title: str) -> bool:
+    """True when the question uses a distinctive word of the document's title
+    ("Chebet" for "Chebet v Republic", "Westlands" for the Westlands lease)."""
+    # Letters only: years and citation numbers ("2026", "12838") are shared by
+    # many documents, so "HC-245-2026" must not match "[2026 KEHC 12838]".
+    title_words = set(re.findall(r"[a-z]+", pretty_title.lower())) - _GENERIC_TITLE_WORDS
+    query_words = set(re.findall(r"[a-z]+", query.lower()))
+    return bool({w for w in title_words if len(w) >= 3} & query_words)
+
+
+def _prefer_named_document(query: str, candidates: list[Any], ranked: list[Any], top_n: int) -> list[Any]:
+    """When the question names a document, its chunks take the context slots
+    before other documents. The reranker scores chunks on their own, so for
+    "What was the outcome of Chebet v Republic?" it kept other 'v Republic'
+    appeals and dropped Chebet's own disposition chunk; the model then
+    reported the lower court's result as the outcome."""
+    def named(doc: Any) -> bool:
+        title = (getattr(doc, "metadata", {}) or {}).get("file_title") or ""
+        return bool(title) and _query_names_title(query, _pretty_title(title))
+
+    def key(doc: Any) -> tuple:
+        meta = getattr(doc, "metadata", {}) or {}
+        return (_doc_key(meta), meta.get("chunk_index"), doc.page_content[:80])
+
+    pinned: dict[tuple, Any] = {}
+    for doc in [*ranked, *candidates]:  # reranker order first, then search order
+        if named(doc):
+            pinned.setdefault(key(doc), doc)
+    if not pinned:
+        return ranked[:top_n]
+    rest = [d for d in ranked if key(d) not in pinned]
+    return [*pinned.values(), *rest][:top_n]
+
+
 def _clarifying_question(query: str, docs: list[Any]) -> str | None:
     """Ask which document is meant instead of guessing, when the question
     points at one specific document ("the judge", "the contract") without
@@ -399,11 +441,8 @@ def _clarifying_question(query: str, docs: list[Any]) -> str | None:
     title_text = " ".join(candidates).lower()
     if names and not any(n in title_text for n in names):
         return None
-    query_words = set(re.findall(r"[a-z0-9]+", query.lower()))
-    for title in candidates:
-        title_words = set(re.findall(r"[a-z0-9]+", title.lower())) - _GENERIC_TITLE_WORDS
-        if {w for w in title_words if len(w) >= 3} & query_words:
-            return None  # the question names one of the documents
+    if any(_query_names_title(query, title) for title in candidates):
+        return None  # the question names one of the documents
     listed = "\n".join(f"- {t}" for t in list(candidates)[:5])
     return f"Your question could refer to more than one document:\n{listed}\n\nWhich one do you mean?"
 
@@ -641,7 +680,7 @@ async def _prepare_turn(
 
 
 def _finish_turn(session_id: str, turn: dict[str, Any], answer: str) -> dict[str, Any]:
-    answer, bad = _strip_invalid_citations(answer, len(turn["sources"]))
+    answer, bad = _strip_invalid_citations(_normalize_citations(answer), len(turn["sources"]))
     if bad:
         logger.warning("invalid citations removed | session=%s | count=%d", session_id, bad)
     turn["persist"](answer)

@@ -24,6 +24,12 @@ def test_context_numbers_match_sources_list():
     assert "[2] Mutunga v Republic" in ctx and "| 3. RENT" in ctx
 
 
+def test_native_gpt_oss_citations_become_numbers():
+    from agents.rag_agent import _normalize_citations
+
+    assert _normalize_citations("died on 14 March 2019【1†L1-L3】 and 【2】.") == "died on 14 March 2019[1] and [2]."
+
+
 def test_invalid_citation_numbers_are_removed():
     cleaned, removed = _strip_invalid_citations("Rent is KES 280,000 [1]. Notice is 6 months [4][2].", 2)
     assert cleaned == "Rent is KES 280,000 [1]. Notice is 6 months [2]."
