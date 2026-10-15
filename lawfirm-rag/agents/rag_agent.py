@@ -29,10 +29,11 @@ CORE BEHAVIOUR RULES:
 1. Answer ONLY from the retrieved context below — never from general knowledge.
 2. For greetings or small talk: respond briefly without referencing the knowledge base.
 3. Cite every statement drawn from the context with its source number in square brackets, e.g. [1] or [2][3], using ONLY the numbers shown in the RETRIEVED CONTEXT headers. Never cite file names, matter IDs or numbers that do not appear there.
-4. If the context does not answer the question, say: "I could not find an answer in the firm's document repository." Then ask ONE short follow-up question that would let you find it (e.g. the case name or parties, the matter ID, or the document type). If the context mentions documents that might be relevant, name them so the user can pick.
+4. If the context does not answer the question, say: "I could not find an answer in the firm's document repository." Then ask ONE short follow-up question that would let you find it (e.g. the case name or parties, the matter ID, or the document type). If the context mentions documents that might be relevant, name them so the user can pick. Do NOT include any [n] citation markers in this reply.
 5. If the question is ambiguous — it fits more than one document in the context (e.g. "the succession case" when there are several), or it refers to "the judge"/"the contract" with no earlier turn saying which — do not guess. Briefly list the candidates from the context and ask which one the user means.
 6. If you can answer only part of the question, answer that part, then say what is missing and ask a follow-up question about it.
 7. Never speculate beyond the retrieved content.
+8. Write in plain text only — no markdown. Do not use asterisks for bold or italic, dash or bullet lists, or # headings. Use complete sentences and short paragraphs.
 
 RETRIEVED CONTEXT:
 {context}
@@ -348,6 +349,39 @@ def _strip_invalid_citations(answer: str, n_sources: int) -> tuple[str, int]:
         return ""
 
     return _CITATION.sub(keep, answer), removed
+
+
+# The canonical no-answer opening (prompt rule 4). A reply that starts with
+# this admits nothing in the context supports an answer, yet the model used to
+# still tack on valid-index citations ([1][2]) — which _strip_invalid_citations
+# keeps, so the user saw fabricated citations. Same phrase the golden-set eval
+# keys on (scripts/eval_golden.py).
+_NO_ANSWER = re.compile(
+    r"^\s*I could not find an answer in the firm'?s document repository",
+    re.I,
+)
+
+
+def _is_no_answer(answer: str) -> bool:
+    return bool(_NO_ANSWER.match(answer))
+
+
+# gpt-oss writes markdown (**bold**, - bullets, # headings) but the UI renders
+# answers as plain text, so the symbols showed literally. Strip them rather
+# than render markdown — answers should read as normal prose.
+_MD_HEADING = re.compile(r"^[ \t]*#{1,6}[ \t]*", re.M)
+_MD_BULLET = re.compile(r"^[ \t]*[-*•][ \t]+", re.M)
+_MD_BOLD = re.compile(r"(\*\*|__)(.+?)\1", re.S)
+_MD_ITALIC = re.compile(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)", re.S)
+
+
+def _strip_markdown(answer: str) -> str:
+    answer = _MD_HEADING.sub("", answer)
+    answer = _MD_BULLET.sub("", answer)
+    answer = _MD_BOLD.sub(r"\2", answer)
+    answer = _MD_ITALIC.sub(r"\1", answer)
+    # Any stray single asterisks left over (lone emphasis markers, list dots).
+    return answer.replace("*", "")
 
 
 # Definite references that presuppose the user has ONE document in mind.
@@ -680,9 +714,19 @@ async def _prepare_turn(
 
 
 def _finish_turn(session_id: str, turn: dict[str, Any], answer: str) -> dict[str, Any]:
-    answer, bad = _strip_invalid_citations(_normalize_citations(answer), len(turn["sources"]))
-    if bad:
-        logger.warning("invalid citations removed | session=%s | count=%d", session_id, bad)
+    answer = _normalize_citations(answer)
+    if _is_no_answer(answer):
+        # Nothing in the context supports an answer: drop any citation markers
+        # the model still emitted and stop advertising the retrieved documents
+        # as sources (they do not actually back the reply).
+        answer = _CITATION.sub("", answer)
+        answer = re.sub(r"[ \t]{2,}", " ", answer).strip()
+        turn["sources"] = []
+    else:
+        answer = _strip_markdown(answer)
+        answer, bad = _strip_invalid_citations(answer, len(turn["sources"]))
+        if bad:
+            logger.warning("invalid citations removed | session=%s | count=%d", session_id, bad)
     turn["persist"](answer)
     result = {"answer": answer, "sources": turn["sources"]}
     if answer and answer != GENERATION_FAILED_RESPONSE:

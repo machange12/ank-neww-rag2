@@ -35,3 +35,23 @@ export function safeParseJSON(raw, fallback) {
     return fallback;
   }
 }
+
+const NO_ANSWER_RE = /^\s*I could not find an answer in the firm'?s document repository/i;
+
+export function isNoAnswer(answer) {
+  return NO_ANSWER_RE.test(answer || "");
+}
+
+export function stripNoAnswerCitations(answer) {
+  return (answer || "").replace(/\[\d+\]/g, "").replace(/[ \t]{2,}/g, " ").trim();
+}
+
+export function stripMarkdown(answer) {
+  if (!answer) return answer;
+  return answer
+    .replace(/^[ \t]*#{1,6}[ \t]*/gm, "")
+    .replace(/^[ \t]*[-*\u2022][ \t]+/gm, "")
+    .replace(/(\*\*|__)(.+?)\1/gs, "$2")
+    .replace(/(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/gs, "$1")
+    .replace(/\*/g, "");
+}

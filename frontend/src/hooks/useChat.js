@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { sourcesFromResponse, parseJsonResponse } from "../lib/api";
-import { downloadText, safeParseJSON } from "../lib/format";
+import { downloadText, isNoAnswer, safeParseJSON, stripMarkdown, stripNoAnswerCitations } from "../lib/format";
 
 // Research query/answer/sources, conversation session id, and local
 // History/Saved. `token` is only watched to reset the conversation session on
@@ -49,6 +49,12 @@ export function useChat({ apiFetch, token, authHeaders, setStatus, setActiveNav,
       let output = "";
       let rawSources = [];
       setAnswer("");
+      // gpt-oss sometimes writes 【1†L1-L3】 instead of [1]; show [1]. Answers
+      // are plain text, so strip markdown the model emits (**bold**, - bullets).
+      const display = (text) => {
+        const normalized = text.replace(/【\s*(\d+)(?:†[^】]*)?\s*】/g, "[$1]");
+        return isNoAnswer(normalized) ? stripNoAnswerCitations(normalized) : stripMarkdown(normalized);
+      };
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
@@ -66,13 +72,13 @@ export function useChat({ apiFetch, token, authHeaders, setStatus, setActiveNav,
           else if (event.type === "token") {
             if (!output) setStatus("Writing answer");
             output += event.text;
-            // gpt-oss sometimes writes 【1†L1-L3】 instead of [1]; show [1].
-            setAnswer(output.replace(/【\s*(\d+)(?:†[^】]*)?\s*】/g, "[$1]"));
+            setAnswer(display(output));
           }
         }
       }
-      output = output.replace(/【\s*(\d+)(?:†[^】]*)?\s*】/g, "[$1]");
-      const responseSources = sourcesFromResponse(rawSources);
+      const noAnswer = isNoAnswer(output);
+      output = display(output);
+      const responseSources = noAnswer ? [] : sourcesFromResponse(rawSources);
       const latency = ((performance.now() - started) / 1000).toFixed(1);
       const item = {
         id: crypto.randomUUID(),
