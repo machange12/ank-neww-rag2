@@ -112,8 +112,8 @@ and the legal-evidence/citation tooling is typed, deterministic and conservative
 ### Ops & tooling
 
 - Versioned SQL migrations (`supabase/migrations/` `0000`–`00015`), single source of truth; legacy `sql/*` frozen as deprecated reference.
-- Offline pytest suite (162 tests) covering authz policy, upload acceptance, citations, legal evidence, drafting, draft sharing, playbooks, export, library seeding, schema manifest, service-role isolation, session ownership.
-- Schema manifest verifier (`scripts/verify_schema.py`), migration runner (`scripts/apply_migrations.py`), chat/ingest smoke tests, OAuth token helper.
+- Offline pytest suite (174 tests) covering authz policy, upload acceptance, citations, legal evidence, drafting, draft sharing, playbooks, export, library seeding, schema manifest, service-role isolation, session ownership, production-env gate.
+- Schema manifest verifier (`scripts/verify_schema.py`), production `.env` gate (`scripts/check_production_env.py`), migration runner (`scripts/apply_migrations.py`), chat/ingest smoke tests, OAuth token helper.
 - Retrieval-quality eval harnesses: `scripts/eval_retrieval.py` (golden-set hit-rate / zero-result-rate against a running backend), `scripts/eval_golden.py` (synthetic-doc accuracy) and `scripts/eval_drafting.py` (Draft Studio groundedness / citation validity / needs-source correctness).
 - Streamlit test UI (`streamlit_app.py`) with login/chat/upload/admin tabs.
 
@@ -413,7 +413,7 @@ Pure-logic packages (no DB): `authz/`, `citations/`, `corpus/legal_evidence/`,
 - **Storage:** Supabase (Postgres + pgvector, PostgREST + RLS), Google Drive API.
 - **Frontend:** React 19, Vite, Tailwind CSS, lucide-react (no router, no state
   library, no TypeScript).
-- **Tests:** pytest (162 offline tests); `requests`-based integration script.
+- **Tests:** pytest (174 offline tests); `requests`-based integration script.
 
 ## Repo layout
 
@@ -421,6 +421,7 @@ Pure-logic packages (no DB): `authz/`, `citations/`, `corpus/legal_evidence/`,
 lawfirm-rag/            FastAPI backend, packages, tests, migrations, scripts, Dockerfile
 frontend/               React + Vite dashboard (builds to lawfirm-rag/static)
 deploy/oci/             Oracle Cloud deploy: systemd units + nginx config
+.github/workflows/      CI: offline tests + arm64/amd64 image build
 docs/                   architecture, decisions (ADRs), operations, security
 docker-compose.yml      container deploy (see docs/operations/oci-deployment.md)
 .env / .env.example     configuration (do not commit .env)
@@ -467,7 +468,7 @@ Full setup (Supabase schema, Google Drive OAuth, users, access levels) is in
 
 ```bash
 cd lawfirm-rag
-../.venv/Scripts/python -m pytest tests/ -q                # 162 offline tests (Windows)
+../.venv/Scripts/python -m pytest tests/ -q                # 174 offline tests (Windows)
 # ../.venv/bin/python -m pytest tests/ -q                  # macOS / Linux
 ../.venv/Scripts/python scripts/verify_schema.py --manifest-only
 ../.venv/Scripts/python tests/integration_test.py           # live backend checks
@@ -562,6 +563,7 @@ applying and roll back by restoring the backup — see
 ## Further reading
 
 - [`docs/operations/oci-deployment.md`](docs/operations/oci-deployment.md) — deploy on Oracle Cloud (Docker or systemd + nginx)
+- [`docs/operations/render-to-oci-cutover.md`](docs/operations/render-to-oci-cutover.md) — ordered Render → OCI cutover checklist (app stays on Supabase)
 - [`docs/architecture/foundation-integrity.md`](docs/architecture/foundation-integrity.md)
 - [`docs/architecture/legal-evidence-model.md`](docs/architecture/legal-evidence-model.md)
 - [`docs/security/threat-model.md`](docs/security/threat-model.md)

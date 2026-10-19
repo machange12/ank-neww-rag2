@@ -46,7 +46,7 @@ Language parity: English **and** Swahili (house non-negotiable).
 | 8. Eval golden set + README/docs sync | ✅ Done |
 | 9. Matter-scoped draft sharing (read-only, opt-in) | ✅ Done |
 
-Test suite: **162 passing** (`python -m pytest tests/ -q`). Offline, no network.
+Test suite: **174 passing** (`python -m pytest tests/ -q`). Offline, no network.
 
 ---
 
@@ -408,6 +408,50 @@ validated the compose file.
 > into a session transcript (Supabase service-role + anon keys, JWT secret, DB
 > password, Groq/Cohere/Gemini/Fireworks/HF keys, Google OAuth secret + refresh
 > token). Treat all as compromised and rotate.
+
+---
+
+## Hosting-migration prep (2026-10-19)
+
+Confirmed with the user: **keep the database on Supabase; OCI is hosting-only.**
+That captures *every* hosting benefit (always-on Drive poll, ~24× RAM, no cold
+starts, no Render "service-initiated traffic" suspension clause, no 750-hour
+cliff) with **none** of the database-rewrite risk. The residual costs are the
+generic self-hosting tax (patching/TLS/backups/monitoring, idle-reclamation,
+A1 capacity, no managed rollback) — all mitigable, and each has a mitigation in
+the cutover doc.
+
+Four follow-ups from the previous session, all done:
+
+1. **Corrected stale free-tier figures.** `oci-deployment.md` claimed "Ampere A1
+   free tier (up to 4 OCPU / 24 GB)" and "a 1 OCPU / 6 GB AMD shape". Reality:
+   Always Free A1 is **1,500 OCPU-h + 9,000 GB-h/month = 2 OCPU / 12 GB
+   always-on** (4/24 is the *Free Trial* allowance), and the Always Free AMD
+   shape is **`E2.1.Micro` = 1/8 OCPU / 1 GB** (too small for this app). Added
+   the idle-reclamation rule and the A1 "out of host capacity" caveat. Also
+   refreshed the runbook's test count (157 → **174**).
+2. **New `docs/operations/render-to-oci-cutover.md`** — the ordered runbook this
+   was missing: pre-flight (incl. "verify the Docker image, esp. arm64"), OCI
+   provisioning, base OS/SELinux, secrets, the production-`.env` gate, deploy
+   (compose **or** systemd) + worker, nginx/TLS, **verify before the DNS flip**,
+   the DNS cutover, rollback, post-cutover hardening, and a residual-risk table.
+   Linked from `README.md` and `oci-deployment.md`.
+3. **New `.github/workflows/ci.yml`** — three jobs: the offline pytest suite +
+   `verify_schema.py --manifest-only`; a **real multi-arch image build**
+   (`linux/amd64` **+ `linux/arm64`**, no push) — the first-ever verification of
+   `lawfirm-rag/Dockerfile`, and specifically of the **Arm** target the A1 shape
+   needs; and a self-test of the env checker. Addresses the "Docker daemon was
+   down, image never built" gap flagged in the OCI section above.
+4. **New `lawfirm-rag/scripts/check_production_env.py`** — a stdlib-only static
+   gate over the production `.env`: requires `ENVIRONMENT=production`, an
+   explicit (non-`*`) `CORS_ORIGINS`, the Supabase keys + `SUPABASE_JWT_SECRET`,
+   `POSTGRES_DSN`, `GROQ_API_KEY`, **a hosted embedder** (`OPENAI_API_KEY` or all
+   three `REMOTE_EMBED_*` — the image ships no torch), `INGEST_WORKER_TOKEN`
+   (opt-in), `EMBEDDING_DIM=768`, plus format/placeholder checks and warnings for
+   optional services. `--json` for tooling; exit 1 on errors.
+   - `tests/test_check_production_env.py` — **12** offline tests. Suite: **174
+     passing** (was 162); counts refreshed in `README.md`, `progress.md`, the
+     runbook and the cutover doc.
 
 ---
 

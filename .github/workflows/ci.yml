@@ -1,0 +1,109 @@
+# CI: offline test suite + a real Docker image build.
+#
+# The image build matters beyond "does it compile": OCI's Always Free Ampere A1
+# shape is **Arm**, and `lawfirm-rag/Dockerfile` had never actually been built
+# anywhere (Docker was unavailable when it was written). Building for
+# `linux/arm64` here proves the deploy target before anyone provisions a VM.
+#
+# Nothing is pushed. This workflow only validates.
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: Offline tests (Python 3.11)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: lawfirm-rag
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: lawfirm-rag/requirements.txt
+
+      # requirements.txt intentionally has no pytest and no torch: the suite is
+      # fully offline (fakes/monkeypatch), and production uses a hosted embedder.
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pytest
+
+      - name: Offline test suite
+        run: python -m pytest tests/ -q
+
+      - name: Schema manifest check (offline)
+        run: python scripts/verify_schema.py --manifest-only
+
+  docker:
+    name: Build image (linux/amd64 + linux/arm64)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # QEMU is what lets a single runner produce an arm64 image (the A1 target).
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: lawfirm-rag/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  production-env:
+    name: Production env gate (CLI exit codes)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: lawfirm-rag
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # The checker is deliberately dependency-free (stdlib only), so there is
+      # nothing to pip install. Test the *CLI*, not just the functions: a
+      # placeholder .env must FAIL the gate, a complete one must PASS it.
+      - name: Placeholder .env must fail
+        run: |
+          if python scripts/check_production_env.py --env-file .env.example; then
+            echo "::error::expected .env.example to fail the production gate"
+            exit 1
+          fi
+
+      - name: Complete .env must pass
+        run: |
+          cat > "$RUNNER_TEMP/good.env" <<'EOF'
+          ENVIRONMENT=production
+          CORS_ORIGINS=https://rag.ak.law
+          SUPABASE_URL=https://abcdefghijklmnop.supabase.co
+          SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.anon
+          SUPABASE_SERVICE_ROLE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.svc
+          SUPABASE_JWT_SECRET=s3cr3t-jwt-signing-value
+          POSTGRES_DSN=postgresql://postgres:pw@db.abcdefghijklmnop.supabase.co:5432/postgres
+          GROQ_API_KEY=gsk_live_0123456789
+          REMOTE_EMBED_URL=https://generativelanguage.googleapis.com/v1beta/openai/
+          REMOTE_EMBED_KEY=AIzaSyRealEmbeddingKey
+          REMOTE_EMBED_MODEL=gemini-embedding-001
+          EMBEDDING_DIM=768
+          INGEST_WORKER_TOKEN=a-long-random-operator-token
+          EOF
+          python scripts/check_production_env.py --env-file "$RUNNER_TEMP/good.env" --require-worker-token

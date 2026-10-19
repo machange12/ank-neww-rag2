@@ -4,6 +4,11 @@ Move the app off Render onto an OCI VM. **Hosting only** — this keeps Supabase
 (Postgres + RLS + Auth) unchanged. Moving the *database* to Oracle is a separate,
 much larger project (see `progress.md` / the notes at the end).
 
+> For the ordered, checkbox-by-checkbox migration from a live Render service
+> (pre-flight, DNS cutover, rollback), use
+> [`render-to-oci-cutover.md`](render-to-oci-cutover.md). This document is the
+> reference for *what* to install and how it is configured.
+
 The system has **two** processes:
 
 - **app** (`app:app`) — the API + built frontend, and an **in-process**
@@ -36,8 +41,23 @@ Pick **one** of: Docker Compose, or bare-VM systemd. Both put the app on
 - **Region**: co-locate with the Supabase project (the app makes 5–8 DB calls
   per chat). If Supabase is `eu-west-1`, pick an EU OCI region (e.g. Frankfurt).
 - **Shape**: the image has **no torch** (embeddings run via a hosted API), so a
-  small shape is fine. The Ampere A1 free tier (up to 4 OCPU / 24 GB) is ample;
-  a 1 OCPU / 6 GB AMD shape also works.
+  small shape is fine. The **OCI Always Free** compute allowance is, per the
+  current OCI docs:
+  - **Ampere A1 (Arm), `VM.Standard.A1.Flex`** — 1,500 OCPU-hours + 9,000 GB-hours
+    per month, which is **equivalent to 2 OCPU / 12 GB running always-on**. That
+    is the shape to use: ~24× the RAM of Render's free instance.
+    (The "4 OCPU / 24 GB" figure that circulates is the *Free Trial / promotional*
+    allowance, **not** Always Free.) Note that A1 must be created in the
+    **home region**, and "out of host capacity" is a common transient error —
+    retry, or try another availability domain.
+  - **AMD micro, `VM.Standard.E2.1.Micro`** — up to 2 instances, but each is only
+    **1/8 OCPU / 1 GB**. Fine for a trivial app; **too small for this one**
+    (LangChain + SSE streams), so treat it as a last resort.
+  - Idle Always Free instances can be reclaimed by Oracle if, over 7 days, the
+    95th-percentile CPU, network **and** memory utilisation are all under 20%.
+    This app's 6-hourly Drive poll plus monitoring traffic keeps it active; the
+    usual belt-and-braces fix is to upgrade the tenancy to Pay-As-You-Go, which
+    keeps Always Free resources free but removes the reclamation rule.
 - **Hosted embedder required.** Set `OPENAI_API_KEY`, or
   `REMOTE_EMBED_URL` / `REMOTE_EMBED_KEY` / `REMOTE_EMBED_MODEL`. Without one the
   app tries to load the local HuggingFace model, which is not installed.
@@ -161,7 +181,7 @@ Never commit `.env`; it is gitignored and excluded from the image.
 curl -fsS https://your.domain.example/healthz        # {"status":"ok"}
 open  https://your.domain.example/                    # login screen
 cd /opt/lawfirm-rag/lawfirm-rag
-../.venv/bin/python -m pytest tests/ -q               # 157 offline tests
+../.venv/bin/python -m pytest tests/ -q               # 174 offline tests
 ../.venv/bin/python scripts/verify_schema.py          # live DB -> SCHEMA OK
 ```
 
