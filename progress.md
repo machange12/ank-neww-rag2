@@ -455,6 +455,278 @@ Four follow-ups from the previous session, all done:
 
 ---
 
+## OCI walkthrough — concrete steps ⏸ **DEFERRED (for review)**
+
+**Status: not started.** On 2026-10-19 the decision was taken to fix other
+things first. Nothing exists yet: no VM, no VCN, no reserved IP, no account
+change. This section is the complete, self-contained recipe for when work
+resumes, with the decisions already taken and every command specific to this
+repo.
+
+Reference runbooks (generic, keep them in sync):
+[`docs/operations/render-to-oci-cutover.md`](docs/operations/render-to-oci-cutover.md)
+(ordered checklist) and
+[`docs/operations/oci-deployment.md`](docs/operations/oci-deployment.md)
+(what to install and how it is configured).
+
+### Decisions locked for this attempt
+
+| Decision | Value | Why |
+|---|---|---|
+| Region | **Frankfurt (`eu-frankfurt-1`)** | closest to Supabase `eu-west-1`; every chat makes 5–8 DB round-trips |
+| Home region | **must be Frankfurt** | Always Free resources exist *only* in the tenancy's home region, and A1 can only be created there |
+| Shape | `VM.Standard.A1.Flex`, **2 OCPU / 12 GB** | the *entire* Always Free A1 allowance for the tenancy |
+| OS | **Ubuntu 24.04** | most documented Docker install; matches the Compose path |
+| Deploy | **Docker Compose** | stage 1 builds the frontend; mirrors the CI image build |
+| TLS | **no domain yet → sslip.io** | dashed-IP hostname; explicit stopgap, not a destination |
+| Embedder | **Gemini** (`REMOTE_EMBED_*`) | the image ships no torch |
+| Database | **stays on Supabase** | hosting-only move; the DB rewrite is out of scope |
+
+### Verified free-tier facts (OCI docs, re-checked 2026-10-19)
+
+> "All tenancies get the first **1,500 OCPU hours and 9,000 GB hours per month**
+> for free … For Always Free tenancies, this is equivalent to **2 OCPUs and 12 GB
+> of memory**."
+> — [Always Free Resources](https://docs.oracle.com/en-us/iaas/Content/FreeTier/freetier_topic-Always_Free_Resources.htm)
+
+- AMD micro `E2.1.Micro` = **1/8 OCPU / 1 GB** (up to 2) — too small for this app.
+- Block storage: **200 GB total** (boot + block combined); default boot volume
+  50 GB; minimum ~47–50 GB.
+- Egress: 10 TB/month. VCN cap on free tenancies: **2**.
+- **Idle reclamation:** an instance is reclaimed if, over a 7-day window, the
+  95th-percentile CPU is <20% **and** network is <20% **and** memory is <20%
+  (memory applies to A1 only). The 6-hourly Drive poll plus an uptime monitor keep
+  it active; upgrading the tenancy to Pay-As-You-Go keeps Always Free resources
+  free and removes the rule.
+- **"Out of host capacity"** on A1 is transient: retry, try another availability
+  domain (any except South Korea North), or wait. Do **not** downsize to the AMD
+  micro.
+
+### Three blockers found while preparing — already fixed
+
+| # | Problem | Fix | Commit |
+|---|---|---|---|
+| 1 | `deploy/oci/nginx-lawfirm-rag.conf` used `http2 on;`, which needs nginx ≥ 1.25.1; Ubuntu 24.04 ships 1.24 and OL9 ships 1.22 → `nginx -t` fails | removed; HTTP/1.1 is also safer for SSE token streaming | `8dbed75d` |
+| 2 | TLS bootstrap was a deadlock: the reference nginx config references `/etc/letsencrypt/live/<host>/…`, which does not exist until certbot has run, so `nginx -t` fails first | cutover doc reordered: HTTP-only block → `nginx -t` → `certbot --nginx` | `8dbed75d` |
+| 3 | `frontend/.env` sets `VITE_API_BASE_URL=http://localhost:8001`; Vite loads `.env` in every mode and the documented `npm run build` writes the bundle Render serves **verbatim** (Render's build command only runs pip) → a local rebuild would point the live app at localhost | `envDir: false` in production mode; proved with a sentinel URL (`b25490c9`) | `b25490c9` |
+
+Prep commit (cutover checklist, CI, prod env gate): `aaeb1938`.
+
+### Step 0 — Pre-flight (local)
+
+```powershell
+cd lawfirm-rag
+& "..\.venv\Scripts\python.exe" -m pytest tests/ -q                 # 174 passed
+& "..\.venv\Scripts\python.exe" scripts/verify_schema.py --manifest-only   # SCHEMA OK
+cd ..\frontend
+npm run build                                                       # writes lawfirm-rag/static
+```
+
+The **CI `docker` job must be green** before provisioning: it is the first real
+build of `lawfirm-rag/Dockerfile`, and specifically of the `linux/arm64` target
+this A1 shape needs. Also record the current Render deploy SHA (rollback target).
+
+### Step 1 — Account & home region (~5 min, browser)
+
+- No account: sign up at `cloud.oracle.com`, **home region = Frankfurt**, choose
+  *Always Free*. A card is required for identity verification (temporary ~$1
+  authorisation hold, not a charge).
+- Existing account: **Tenancy details → Home region**.
+  ⚠️ If the home region is not Frankfurt, stop and decide first — you either
+  accept the latency to Supabase (Ireland) or open a new tenancy.
+
+### Step 2 — Network + VM (~15 min, browser)
+
+**VCN:** Networking → VCN → *Create VCN with Internet Connectivity*.
+Name `lawfirm-vcn`, CIDR `10.0.0.0/16`, public subnet `10.0.1.0/24`.
+(Free tenancies are capped at **2 VCNs** — don't create throwaways.)
+
+**Security list** — the wizard adds `22` from `0.0.0.0/0`; edit the **public**
+security list to:
+
+| Direction | Source | Port |
+|---|---|---|
+| Ingress | **your public IP/32** | 22 |
+| Ingress | `0.0.0.0/0` | 80 |
+| Ingress | `0.0.0.0/0` | 443 |
+
+**Instance:** Compute → Instances → *Create instance*
+- Name `lawfirm-rag`; Image **Canonical Ubuntu 24.04**
+- Shape **Ampere → `VM.Standard.A1.Flex` → 2 OCPU / 12 GB**
+- Boot volume **50 GB** (counts against the 200 GB total)
+- Public subnet, **assign a public IPv4**
+- Paste your SSH **public** key (`~/.ssh/id_ed25519.pub` or `id_rsa.pub`)
+- Confirm the **Always Free-eligible** badge before creating
+- Capacity error → retry / another availability domain (see facts above)
+
+**Reserve the IP:** Instance → *Attached VNICs* → the VNIC → *IPv4 Addresses* →
+the public IP → Edit → **Reserved public IP**. An ephemeral IP changes on
+stop/start and silently breaks the hostname and certificate.
+
+Record it (substitute your own; `203.0.113.10` is illustrative):
+
+```
+<RESERVED_IP> = 203.0.113.10
+hostname      = 203-0-113-10.sslip.io        # dashes, not dots
+```
+
+### Step 3 — First login, Docker, nginx (~10 min)
+
+```bash
+ssh ubuntu@<RESERVED_IP>
+uname -m                     # must print: aarch64
+
+sudo apt-get update && sudo apt-get -y upgrade
+sudo apt-get install -y ca-certificates curl gnupg git nginx certbot python3-certbot-nginx
+
+sudo install -m 0755 -d /etc/apt/keyrings
+sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+sudo chmod a+r /etc/apt/keyrings/docker.asc
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
+sudo apt-get update
+sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+sudo usermod -aG docker ubuntu
+sudo systemctl enable --now nginx
+exit                          # log out/in so the docker group applies
+```
+
+```bash
+ssh ubuntu@<RESERVED_IP>
+docker version --format '{{.Server.Arch}}'   # expect: arm64
+docker compose version
+```
+
+### Step 4 — Code + secrets (~10 min)
+
+On the VM:
+
+```bash
+sudo git clone https://github.com/machange12/ank-neww-rag2.git /opt/lawfirm-rag
+sudo chown -R ubuntu:ubuntu /opt/lawfirm-rag
+```
+
+On **Windows**, from the repo root (the same Supabase project — that is the point):
+
+```powershell
+scp .env ubuntu@<RESERVED_IP>:/home/ubuntu/.env
+```
+
+Back on the VM:
+
+```bash
+sudo mv /home/ubuntu/.env /opt/lawfirm-rag/.env
+sudo chown ubuntu:ubuntu /opt/lawfirm-rag/.env
+chmod 600 /opt/lawfirm-rag/.env
+nano /opt/lawfirm-rag/.env
+```
+
+Change exactly these two lines; leave `SUPABASE_*`, `GROQ_API_KEY` and the three
+`REMOTE_EMBED_*` (Gemini) values alone:
+
+```ini
+ENVIRONMENT=production
+CORS_ORIGINS=https://203-0-113-10.sslip.io     # your dashed-IP host
+```
+
+`SUPABASE_JWT_SECRET` is **mandatory** in production — `auth/jwt_validator.py`
+fails closed without it.
+
+Validate before building (this catches the silent-500 class of mistakes):
+
+```bash
+cd /opt/lawfirm-rag/lawfirm-rag
+python3 scripts/check_production_env.py --env-file ../.env
+```
+
+Expect `PRODUCTION ENV OK` (warnings for skipped optional services are fine).
+
+### Step 5 — Build & run (10–20 min)
+
+```bash
+cd /opt/lawfirm-rag
+docker compose up -d --build
+docker compose ps                 # app should reach "healthy"
+curl -fsS localhost:8000/healthz
+docker compose logs --tail=50 app
+```
+
+First build = `npm ci` + Vite + the Python deps (native arm64, not emulated).
+`docker-compose.yml` already forces `ENVIRONMENT=production`, binds the app to
+`127.0.0.1:8000` only, and sets `restart: unless-stopped`.
+
+### Step 6 — HTTPS (sslip.io)
+
+```bash
+sudo tee /etc/nginx/sites-available/lawfirm-rag >/dev/null <<'EOF'
+server {
+    listen 80;
+    listen [::]:80;
+    server_name 203-0-113-10.sslip.io;
+
+    client_max_body_size 30m;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+    location / {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_http_version 1.1;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Connection        "";
+        proxy_buffering off;        # REQUIRED for Server-Sent Events
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+    }
+}
+EOF
+sudo ln -sf /etc/nginx/sites-available/lawfirm-rag /etc/nginx/sites-enabled/
+sudo rm -f /etc/nginx/sites-enabled/default
+sudo nginx -t && sudo systemctl reload nginx
+sudo certbot --nginx -d 203-0-113-10.sslip.io
+```
+
+Do **not** enable `proxy_buffering` or shorten the timeouts: chat and draft
+section streaming stop working token-by-token, and they fail *quietly*.
+
+### Step 7 — Verify
+
+- `https://203-0-113-10.sslip.io/healthz` → `{"status":"ok"}`
+- Sign in, run one chat, **and stream one draft section** (auth + SSE through nginx)
+- Upload a document and let it ingest (proves the Gemini embedder)
+- `docker compose logs app | grep -i schedul` → the 6-hour Drive poll started
+
+### Step 8 — After it is live (not written yet)
+
+- Actions → SSH deploy workflow (there is no auto-deploy on a plain VM).
+- Uptime monitor on `/healthz` (also protects against idle reclamation).
+- Decommission Render: delete the service / `render.yaml`, once stable for a few days.
+- If a real domain is bought: DNS A record → reserved IP, re-run certbot, update
+  `CORS_ORIGINS`, then point users at it.
+
+### Open items before executing
+
+1. **Home region** — confirm it is Frankfurt.
+2. **Domain** — strongly recommended *before* real users. `sslip.io` is a
+   third-party public service; its hostname is unprofessional and changes if the
+   reserved IP changes. A domain makes the Render→OCI move a clean DNS flip with
+   no URL change (~$10–15/year).
+3. **Rotate secrets first** — a previous `docker compose config` printed the whole
+   `.env` into a transcript (see the warning above). Rotating now means one update
+   instead of two. Rotating the Supabase **JWT secret** logs every user out; the
+   anon/service-role keys are server-side only, so `.env` + restart is enough.
+4. **Overlap is safe** — `ingest/scheduler.py` skips unchanged `modifiedTime` and
+   compares `content_hash` before re-ingesting, so Render + OCI polling in
+   parallel does not duplicate chunks. Do not scale to two **app containers**
+   (each polls).
+5. **Keep Render alive** for a few days after cutover — the DB was never touched,
+   so rollback is just a DNS/URL switch back.
+
+---
+
 ## How to run / verify
 
 ```powershell
@@ -542,6 +814,12 @@ $env:EVAL_EMAIL="partner@ak.law"; $env:EVAL_PASSWORD="..."
    panel renders `needs_source` sections in amber (`DraftPanel.jsx`). A
    dedicated "insert from clause bank" affordance would need a new backend
    endpoint; deferred as a later enhancement, not a gap.
+7. **OCI go-live** — **deferred (2026-10-19):** fix other things first. The full
+   recipe, with decisions locked (Frankfurt, 2 OCPU / 12 GB, Ubuntu 24.04, Docker
+   Compose, sslip.io until a domain exists, Gemini embedder, DB stays on Supabase),
+   is the "OCI walkthrough" section above. Nothing has been provisioned; the
+   three blockers that would have stopped the first deploy are already fixed
+   (`8dbed75d`, `b25490c9`).
 
 ## Gotchas / notes
 - `.venv` is at repo root (see above).
