@@ -52,6 +52,7 @@ Legend: `[ ]` to do · `[B]` blocking · `[M]` mitigation applied in this doc.
 - [ ] `[B]` Assign a **reserved public IP** (an ephemeral IP changes on
       stop/start and silently breaks DNS + TLS).
 - [ ] Create the DNS A record → reserved IP.
+      **No domain yet?** See [Appendix: going live without a domain](#appendix-going-live-without-a-domain).
 
 ## 2. Base OS
 
@@ -136,18 +137,59 @@ sudo systemctl daemon-reload && sudo systemctl enable --now lawfirm-rag
 
 ## 6. nginx + TLS
 
+`deploy/oci/nginx-lawfirm-rag.conf` is the **final** config: it points at
+`/etc/letsencrypt/live/<host>/...`, so `nginx -t` fails until certbot has issued
+a certificate. Bootstrap in this order — HTTP first, TLS second:
+
 ```bash
-sudo cp deploy/oci/nginx-lawfirm-rag.conf /etc/nginx/conf.d/
-sudo sed -i 's/rag.example.com/your.domain/g' /etc/nginx/conf.d/lawfirm-rag.conf
+# 1. HTTP-only server block (no certificate references yet).
+#    The location / block must match deploy/oci/nginx-lawfirm-rag.conf:
+#    proxy_buffering off + 300s timeouts are REQUIRED for SSE.
+sudo tee /etc/nginx/sites-available/lawfirm-rag >/dev/null <<'EOF'
+server {
+    listen 80;
+    listen [::]:80;
+    server_name your.domain;
+
+    client_max_body_size 30m;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+    location / {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_http_version 1.1;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Connection        "";
+        proxy_buffering off;        # REQUIRED for Server-Sent Events
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+    }
+}
+EOF
+sudo ln -sf /etc/nginx/sites-available/lawfirm-rag /etc/nginx/sites-enabled/
+sudo rm -f /etc/nginx/sites-enabled/default        # Ubuntu only
+
+# 2. Validate + reload.
 sudo nginx -t && sudo systemctl reload nginx
+
+# 3. Issue TLS. certbot adds the 443 block and the HTTP->HTTPS redirect.
 sudo certbot --nginx -d your.domain
 ```
 
-- [ ] `[B]` The provided config keeps `proxy_buffering off` + 300s timeouts —
-      remove either and chat / section-generation SSE will stop streaming
-      token-by-token (it fails *quietly*, so do not "simplify" the config).
-- [ ] `[M]` Confirm cert renewal is armed: `systemctl list-timers | grep certbot`
+- [ ] `[B]` `proxy_buffering off` + the 300s timeouts are non-negotiable — remove
+      them and chat / section generation stops streaming token-by-token, quietly.
+- [ ] `[B]` Do **not** install `nginx-lawfirm-rag.conf` before the certificate
+      exists; it is the reference/final config, not the bootstrap. It also uses
+      `http2 on;`, which needs nginx >= 1.25.1 (Ubuntu 24.04 ships 1.24, OL9
+      ships 1.22), so it would fail `nginx -t` there.
+- [ ] `[M]` Confirm renewal is armed: `systemctl list-timers | grep certbot`
       (`certbot` installs a timer; without it TLS expires in 90 days).
+- [ ] `[M]` Either keep certbot's generated blocks (simplest), or diff them
+      against `nginx-lawfirm-rag.conf` and merge only the missing hardening.
 
 ## 7. Verify **before** the DNS flip
 
@@ -203,3 +245,70 @@ touched, so there is no data rollback to worry about.
 | You patch the OS | `dnf-automatic` / `unattended-upgrades`. |
 | Single VM, no managed metrics | Uptime monitor + OCI Monitoring (500M free data points). |
 | Latency to Supabase (`eu-west-1`) | Choose Frankfurt/Amsterdam. Fixing it properly means moving the DB — the multi-week rewrite, so accept ~10–20 ms. |
+| **Two** Drive pollers during the overlap (Render + OCI) | Harmless, verified in `ingest/scheduler.py`: it skips files whose Drive `modifiedTime` is unchanged and compares `content_hash` before re-ingesting, so nothing is duplicated. Expect a few extra Drive/DB reads. |
+
+---
+
+## Appendix: going live without a domain
+
+Certbot needs a hostname, not a bare IP. If you don't have a domain yet, you can
+still get real HTTPS today via **sslip.io**, which resolves any hostname that
+embeds an IPv4 address to that address:
+
+```
+reserved IP 152.67.10.20  ->  hostname 152-67-10-20.sslip.io
+```
+
+```bash
+# Confirm DNS first (should print the reserved IP):
+getent hosts 152-67-10-20.sslip.io
+
+# Then, in place of "your.domain" in section 6:
+sudo tee /etc/nginx/sites-available/lawfirm-rag >/dev/null <<'EOF'
+server {
+    listen 80;
+    listen [::]:80;
+    server_name 152-67-10-20.sslip.io;
+
+    client_max_body_size 30m;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+    location / {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_http_version 1.1;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Connection        "";
+        proxy_buffering off;
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+    }
+}
+EOF
+sudo ln -sf /etc/nginx/sites-available/lawfirm-rag /etc/nginx/sites-enabled/
+sudo rm -f /etc/nginx/sites-enabled/default
+sudo nginx -t && sudo systemctl reload nginx
+sudo certbot --nginx -d 152-67-10-20.sslip.io     # note: dashes, not dots
+```
+
+Then set `CORS_ORIGINS=https://152-67-10-20.sslip.io` in `.env`.
+
+**Caveats — this is a stopgap, not a destination:**
+
+- `sslip.io` is a third-party public service. If it's down, your hostname stops
+  resolving. Your certificate is still yours, but the name is not.
+- The URL is unprofessional for a law firm and it changes if the reserved IP
+  ever changes (reserve it, and don't release it).
+- You cannot later "rename" it — moving to a real domain means a second certbot
+  run and a new `CORS_ORIGINS`, plus telling users a new URL. Cheap to do now,
+  annoying after people have bookmarked it.
+
+**Recommendation:** register a domain (≈$10–15/year) before you onboard real
+users — ideally now, so the Render → OCI cutover is a DNS flip with no URL
+change at all. You can start on sslip.io and switch later; just expect that
+second migration step.
+
