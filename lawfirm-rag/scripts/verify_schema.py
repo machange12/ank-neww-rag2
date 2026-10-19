@@ -58,6 +58,9 @@ REQUIRED_MIGRATIONS = [
     "20260727000007",
     "20260727000008",
     "20260727000009",
+    "20261013000012",
+    "20261013000013",
+    "20261013000014",
 ]
 
 TABLES: list[TableCheck] = [
@@ -87,6 +90,22 @@ TABLES: list[TableCheck] = [
     TableCheck("retrieval_events", ["research_run_id", "locked_scope", "query_expansion"]),
     TableCheck("security_events", ["event_type", "action", "outcome", "user_id"], rls_enabled=True,
                policies=["security_events_admin_read"]),
+    TableCheck("draft_templates", ["doc_type", "skeleton", "access_level", "matter_id", "tenant_id"], rls_enabled=True,
+               policies=["draft_templates_select_authorized"]),
+    TableCheck("draft_clauses", ["doc_type", "clause_type", "body", "embedding", "search_tsv", "access_level"], rls_enabled=True,
+               policies=["draft_clauses_select_authorized"]),
+    TableCheck("drafts", ["user_id_uuid", "tenant_id", "matter_id", "title", "doc_type", "template_id", "status", "current_version", "visibility"], rls_enabled=True,
+               policies=["drafts_select_own", "drafts_insert_own"]),
+    TableCheck("draft_sections", ["draft_id", "order_index", "heading", "content", "sources", "status"], rls_enabled=True,
+               policies=["draft_sections_select_own", "draft_sections_select_shared"]),
+    TableCheck("draft_versions", ["draft_id", "version", "snapshot"], rls_enabled=True,
+               policies=["draft_versions_select_own", "draft_versions_select_shared"]),
+    TableCheck("playbooks", ["name", "doc_type", "access_level"], rls_enabled=True,
+               policies=["playbooks_select_authorized"]),
+    TableCheck("playbook_rules", ["playbook_id", "clause_type", "position", "rule_text", "severity"], rls_enabled=True,
+               policies=["playbook_rules_select_authorized"]),
+    TableCheck("draft_checks", ["draft_id", "playbook_id", "flags", "summary"], rls_enabled=True,
+               policies=["draft_checks_select_own", "draft_checks_insert_own", "draft_checks_select_shared"]),
 ]
 
 FUNCTIONS: list[FunctionCheck] = [
@@ -104,16 +123,23 @@ FUNCTIONS: list[FunctionCheck] = [
     FunctionCheck("auth_can_administer_matter", security_definer=True),
     FunctionCheck("auth_can_administer_matter_ref", security_definer=True),
     FunctionCheck("auth_matter_admin_level", security_definer=True),
+    FunctionCheck("match_draft_clauses", security_definer=False),
+    FunctionCheck("hybrid_search_clauses", security_definer=False),
 ]
 
 REQUIRED_INDEXES = [
-    "documents_embedding_idx",
+    "documents_embedding_hnsw",
     "documents_metadata_idx",
     "documents_fts_idx",
     "chat_memory_session_idx",
     "legal_passages_version_idx",
     "legal_doc_versions_document_idx",
     "matter_access_user_idx",
+    "drafts_user_idx",
+    "drafts_visibility_idx",
+    "draft_sections_draft_idx",
+    "draft_clauses_fts_idx",
+    "draft_checks_draft_idx",
 ]
 
 

@@ -5,12 +5,14 @@ import { LoginLanding } from "./components/LoginLanding";
 import { ResearchPanel } from "./components/ResearchPanel";
 import { HistoryPanel } from "./components/HistoryPanel";
 import { DocumentsPanel } from "./components/DocumentsPanel";
+import { DraftPanel } from "./components/DraftPanel";
 import { SimpleList } from "./components/SimpleList";
 import { TeamPanel } from "./components/TeamPanel";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { useAuth } from "./hooks/useAuth";
 import { useChat } from "./hooks/useChat";
 import { useDocuments } from "./hooks/useDocuments";
+import { useDraft } from "./hooks/useDraft";
 import { useBanner } from "./hooks/useBanner";
 import { initials } from "./lib/format";
 import { NAV, SAMPLE_MATTERS } from "./lib/constants";
@@ -34,6 +36,13 @@ export default function ANKRagDashboard() {
   const documents = useDocuments({
     apiFetch: auth.apiFetch,
     authHeaders: auth.authHeaders,
+    setError: banner.setError,
+    setNotice: banner.setNotice,
+  });
+  const draft = useDraft({
+    apiFetch: auth.apiFetch,
+    authHeaders: auth.authHeaders,
+    setStatus,
     setError: banner.setError,
     setNotice: banner.setNotice,
   });
@@ -100,6 +109,41 @@ export default function ANKRagDashboard() {
         uploadProgress={documents.uploadProgress}
         uploadMatterId={documents.uploadMatterId}
         isUploading={documents.isUploading}
+      />
+    ),
+    Drafting: (
+      <DraftPanel
+        activeDraft={draft.activeDraft}
+        checkResult={draft.checkResult}
+        closeDraft={draft.closeDraft}
+        createDraft={draft.createDraft}
+        drafts={draft.drafts}
+        exportDraft={draft.exportDraft}
+        generateSection={draft.generateSection}
+        generatingIndex={draft.generatingIndex}
+        isChecking={draft.isChecking}
+        isCreating={draft.isCreating}
+        isExporting={draft.isExporting}
+        isLoadingDrafts={draft.isLoadingDrafts}
+        isLoadingTemplates={draft.isLoadingTemplates}
+        isSavingVersion={draft.isSavingVersion}
+        isSharing={draft.isSharing}
+        loadDrafts={draft.loadDrafts}
+        loadTemplates={draft.loadTemplates}
+        openDraft={draft.openDraft}
+        playbooks={draft.playbooks}
+        refineSection={draft.refineSection}
+        refiningIndex={draft.refiningIndex}
+        restoreVersion={draft.restoreVersion}
+        restoringVersion={draft.restoringVersion}
+        runCheck={draft.runCheck}
+        saveSection={draft.saveSection}
+        saveVersion={draft.saveVersion}
+        shareDraft={draft.shareDraft}
+        unshareDraft={draft.unshareDraft}
+        savingIndex={draft.savingIndex}
+        streamingText={draft.streamingText}
+        templates={draft.templates}
       />
     ),
     Matters: <SimpleList title="Matter access" rows={SAMPLE_MATTERS} />,

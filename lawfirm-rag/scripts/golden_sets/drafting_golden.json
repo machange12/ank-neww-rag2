@@ -1,0 +1,99 @@
+[
+ {
+  "name": "lease_en_term_and_dispute",
+  "doc_type": "lease",
+  "language": "en",
+  "brief": {
+   "instructions": "Draft a commercial lease between Westlands Properties Ltd (lessor) and Nairobi Retail Group Ltd (lessee) for the ground floor of Westlands Plaza."
+  },
+  "sections": [
+   {
+    "heading": "Term and Rent",
+    "clause_type": "term_and_rent",
+    "guidance": "State the lease term and how rent is payable.",
+    "expect": "grounded",
+    "expected_file_ids": ["synthetic_synth_04_westlands_commercial_lease.txt"]
+   },
+   {
+    "heading": "Dispute Resolution",
+    "clause_type": "dispute_resolution",
+    "guidance": "Explain how disputes between the parties are resolved.",
+    "expect": "grounded",
+    "expected_file_ids": ["synthetic_synth_04_westlands_commercial_lease.txt"]
+   }
+  ]
+ },
+ {
+  "name": "nda_en_clause_bank",
+  "doc_type": "nda",
+  "language": "en",
+  "brief": {
+   "instructions": "Mutual non-disclosure agreement between Acme Ltd and Beta Holdings for evaluating a possible acquisition in Kenya."
+  },
+  "sections": [
+   {
+    "heading": "Governing Law",
+    "clause_type": "governing_law",
+    "guidance": "This agreement is governed by the laws of Kenya.",
+    "expect": "grounded",
+    "expected_file_ids": []
+   },
+   {
+    "heading": "Confidentiality Obligations",
+    "clause_type": "confidentiality",
+    "guidance": "Each party must keep the other party's information confidential.",
+    "expect": "grounded",
+    "expected_file_ids": []
+   }
+  ]
+ },
+ {
+  "name": "nda_en_unsupported",
+  "doc_type": "nda",
+  "language": "en",
+  "brief": {
+   "instructions": "Mutual non-disclosure agreement for evaluating an acquisition."
+  },
+  "sections": [
+   {
+    "heading": "Swiss Bank Guarantee",
+    "clause_type": "bank_guarantee",
+    "guidance": "Provide that the disclosing party must procure an irrevocable Swiss bank guarantee covering any breach of confidentiality.",
+    "expect": "needs_source"
+   }
+  ]
+ },
+ {
+  "name": "nda_sw_clause_bank",
+  "doc_type": "nda",
+  "language": "sw",
+  "brief": {
+   "instructions": "Makubaliano ya usiri (NDA) kati ya Acme Ltd na Beta Holdings kwa ajili ya kutathmini ununuzi unaowezekana nchini Kenya."
+  },
+  "sections": [
+   {
+    "heading": "Sheria Inayotumika",
+    "clause_type": "governing_law",
+    "guidance": "Makubaliano haya yanatawaliwa na sheria za Kenya.",
+    "expect": "grounded",
+    "expected_file_ids": []
+   }
+  ]
+ },
+ {
+  "name": "nda_sw_unsupported",
+  "doc_type": "nda",
+  "language": "sw",
+  "brief": {
+   "instructions": "Makubaliano ya usiri kwa ajili ya kutathmini ununuzi."
+  },
+  "sections": [
+   {
+    "heading": "Dhamana ya Benki ya Uswisi",
+    "clause_type": "bank_guarantee",
+    "guidance": "Kifungu kinachotaka upande unaotoa taarifa upate dhamana ya benki ya Uswisi isiyoweza kubatilishwa kwa ukiukaji wowote wa usiri.",
+    "expect": "needs_source"
+   }
+  ]
+ }
+]

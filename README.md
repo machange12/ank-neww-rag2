@@ -12,7 +12,12 @@ and the legal-evidence/citation tooling is typed, deterministic and conservative
 
 > **Non-claims.** This is engineering tooling, not a legal research service and
 > not a source of legal advice. The legal-evidence and citation helpers are
-> conservative and fail closed, but they do not guarantee legal accuracy.
+> conservative and fail closed, but they do not guarantee legal accuracy. The
+> **Draft Studio** generates *grounded draft text* only: a section with no
+> supporting source is flagged `needs_source` rather than filled in, but every
+> generated draft still needs an advocate's review before it is used. Drafts are
+> **private by default**; an owner may share one **read-only** with a matter's
+> team, and sharing never grants any member a write path.
 
 ---
 
@@ -76,6 +81,22 @@ and the legal-evidence/citation tooling is typed, deterministic and conservative
 | Reviewer overrides | `citations/verifier.py` | Immutable audit records; never mutates original evidence |
 | Fictional seed data | `corpus/legal_evidence/seed.py` | Test-only fixtures (no real external law) |
 
+### Draft Studio (grounded legal drafting)
+
+| Feature | Where | Notes |
+|---|---|---|
+| Grounded section generation | `agents/draft_agent.py` | Every section is generated only from the caller's authorized corpus + curated clause bank, with citations |
+| No-source guard | `agents/draft_agent.py` | Zero grounding → section is persisted as `needs_source`; the LLM is **never** asked to fill the gap |
+| Clause/template library | `drafting/library.py`, `supabase/migrations/20261013000012_drafting.sql` | Curated `draft_templates` / `draft_clauses` (vector + keyword hybrid), read under the caller's RLS |
+| Clause relevance floor | `search/clauses.py` | `CLAUSE_MIN_SIMILARITY` drops irrelevant clauses so an unsupported section is actually flagged, not grounded on a near-miss |
+| Drafts & sections (RLS-owned) | `drafting/store.py`, `routers/draft.py` | `drafts` / `draft_sections` are owner-only (`user_id_uuid = auth.uid()`), like chat sessions |
+| Version history | `drafting/store.py` | Explicit "Save version" + a v1 baseline on create; restore is append-only |
+| Playbook checks | `agents/draft_agent.py`, `drafting/store.py` | Rule-position checks persisted to `draft_checks`; every rule yields exactly one flag (invalid/missing verdict → `unclear`) |
+| DOCX export | `drafting/export.py` | `python-docx` output with a sources appendix + footer disclaimer; also Markdown/plain text |
+| Matter-scoped sharing | `routers/draft.py`, `supabase/migrations/20261013000014_draft_sharing.sql` | Private by default; the owner may share **read-only** with a matter's team (RLS SELECT only — every write stays owner-only, non-owner writes 403) |
+| Language parity | `agents/draft_agent.py` | English **and** Swahili |
+| Drafting eval | `scripts/eval_drafting.py` | Golden-set groundedness, citation validity and needs-source correctness |
+
 ### Frontend (React + Vite)
 
 | Feature | Notes |
@@ -85,14 +106,15 @@ and the legal-evidence/citation tooling is typed, deterministic and conservative
 | Research panel | Answer with copy / export / save / regenerate; prompt starters |
 | Documents panel | Upload (file + matter + access level), list indexed docs, Drive file list + ingest |
 | History / Saved | Browser-local persistence (capped at 25) |
+| Drafting panel | Brief → template picker → section canvas (status/`needs_source` badges, inline edit, refine, sources rail, version history, playbook checks, DOCX/MD/TXT export, private/matter sharing with a read-only view for members) |
 | Production build | `vite build` drops straight into `lawfirm-rag/static/` for single-app serving |
 
 ### Ops & tooling
 
-- Versioned SQL migrations (`supabase/migrations/` `0000`–`0009`), single source of truth; legacy `sql/*` frozen as deprecated reference.
-- Offline pytest suite (64 tests) covering authz policy, upload acceptance, citations, legal evidence, schema manifest, service-role isolation, session ownership.
+- Versioned SQL migrations (`supabase/migrations/` `0000`–`00014`), single source of truth; legacy `sql/*` frozen as deprecated reference.
+- Offline pytest suite (157 tests) covering authz policy, upload acceptance, citations, legal evidence, drafting, draft sharing, playbooks, export, library seeding, schema manifest, service-role isolation, session ownership.
 - Schema manifest verifier (`scripts/verify_schema.py`), migration runner (`scripts/apply_migrations.py`), chat/ingest smoke tests, OAuth token helper.
-- Retrieval-quality eval harness (`scripts/eval_retrieval.py`) — golden-set hit-rate / zero-result-rate against a running backend.
+- Retrieval-quality eval harnesses: `scripts/eval_retrieval.py` (golden-set hit-rate / zero-result-rate against a running backend), `scripts/eval_golden.py` (synthetic-doc accuracy) and `scripts/eval_drafting.py` (Draft Studio groundedness / citation validity / needs-source correctness).
 - Streamlit test UI (`streamlit_app.py`) with login/chat/upload/admin tabs.
 
 ---
@@ -114,6 +136,10 @@ and the legal-evidence/citation tooling is typed, deterministic and conservative
   pure functions with offline tests — fast, deterministic, no network.
 - **Conservative legal tooling.** Corpus status and citation verification fail
   closed; an unclear label is never treated as operational.
+- **Grounded-by-construction drafting.** Draft sections are generated only from
+  authorized sources with a relevance floor, and an unsupported section is
+  flagged `needs_source` rather than padded — the model is never asked to invent
+  the missing text.
 - **Intent-aware, hallucination-guarded RAG.** One-call intent routing, doc-type
   scoping, multi-query + rerank, and a hard no-result guard.
 - **Graceful degradation everywhere.** Retrieval falls back to pure vector
@@ -130,6 +156,16 @@ and the legal-evidence/citation tooling is typed, deterministic and conservative
 
 The following were identified as weaknesses and have since been resolved:
 
+- **Live database migrated through `0000`–`00014` and verified.** Migrations
+  `00010`–`00014` were pending on the live project (the Draft Studio schema was
+  therefore not live); they were applied via `scripts/apply_migrations.py` and
+  the drafting library seeded (`scripts/seed_drafting_library.py`). A live
+  `verify_schema.py` run then surfaced a stale-manifest drift — the verifier
+  still required `documents_embedding_idx`, which migrations `00010`/`00011`
+  intentionally **replaced** with an HNSW index (`documents_embedding_hnsw`).
+  Fixed in `scripts/verify_schema.py`; live run is now `SCHEMA OK`. An end-to-end
+  RLS/RPC smoke test (owner isolation, matter-scoped read-only sharing, clause
+  retrieval + relevance floor) passes against the live DB.
 - **Live database migrated to `0000`–`0009` and verified (`scripts/verify_schema.py` — SCHEMA OK).**
   The live Supabase DB had never had any migration applied (no
   `schema_migrations` table at all) and had evolved a bespoke schema that
@@ -355,11 +391,12 @@ FastAPI app (app.py)  +  ingest worker (ingest/worker.py)
    Supabase PostgREST        ingest/worker paths
         │                       │
         ▼                       ▼
-   Postgres + RLS + migrations 0000..0009
+    Postgres + RLS + migrations 0000..00014
         ├─ chat_sessions / chat_memory        (ownership RLS: user_id_uuid)
         ├─ user_profiles / matter_access      (authorization facts)
         ├─ documents / document_metadata      (retrieval, matter + level RLS)
         ├─ legal_* corpus tables              (legal evidence, migration 0002)
+        ├─ draft_* / playbook_* tables        (grounded drafting, migrations 00012–00014)
         └─ audit_security_events              (append-only)
 ```
 
@@ -375,7 +412,7 @@ Pure-logic packages (no DB): `authz/`, `citations/`, `corpus/legal_evidence/`,
 - **Storage:** Supabase (Postgres + pgvector, PostgREST + RLS), Google Drive API.
 - **Frontend:** React 19, Vite, Tailwind CSS, lucide-react (no router, no state
   library, no TypeScript).
-- **Tests:** pytest (64 offline tests); `requests`-based integration script.
+- **Tests:** pytest (157 offline tests); `requests`-based integration script.
 
 ## Repo layout
 
@@ -410,7 +447,7 @@ Full setup (Supabase schema, Google Drive OAuth, users, access levels) is in
 
 ```bash
 cd lawfirm-rag
-.venv\Scripts\python -m pytest tests/ -q                # 64 offline tests
+.venv\Scripts\python -m pytest tests/ -q                # 157 offline tests
 .venv\Scripts\python scripts/verify_schema.py --manifest-only
 .venv\Scripts\python tests/integration_test.py           # live backend checks
 ```
@@ -432,6 +469,18 @@ access control, feedback ownership) and prints PASS/FAIL per test.
 | GET | `/documents` | List documents |
 | GET | `/documents/intelligence` | Document intelligence |
 | GET | `/sessions` | Session history (RLS) |
+| POST | `/drafts` | Create a draft from a brief (+ optional template skeleton) |
+| GET | `/drafts` | List the caller's own drafts |
+| GET | `/drafts/{id}` | Draft + sections + versions (+ latest playbook check) |
+| POST | `/drafts/{id}/sections/{i}/generate` | Generate one section (SSE, grounded; rate-limited) |
+| POST | `/drafts/{id}/sections/{i}` | Save a manually edited section |
+| POST | `/drafts/{id}/sections/{i}/refine` | Bounded refine of a grounded section |
+| POST | `/drafts/{id}/versions` \| `/drafts/{id}/versions/{v}/restore` | Snapshot / restore (append-only) |
+| GET | `/draft/templates` \| `/draft/clauses` | Curated template / clause library reads |
+| GET | `/draft/playbooks` | Playbook + rules list |
+| POST | `/drafts/{id}/check` | Run a playbook check (persisted to `draft_checks`) |
+| POST | `/drafts/{id}/export` | Export `?fmt=docx\|md\|txt` |
+| POST | `/drafts/{id}/share` \| `/drafts/{id}/unshare` | Share a draft read-only with a matter's team / return it to private (owner only) |
 | GET/POST | `/admin/users` | List / create users (explicit DB admin only) |
 | GET | `/documents/drive-files` | Google Drive file list |
 | POST | `/documents/ingest-folder` | Bulk Drive ingest |
@@ -459,10 +508,15 @@ applying and roll back by restoring the backup — see
 | `20260727000007_embedding_dimension_768.sql` | Fixes `documents.embedding` dimension → 768 to match the local embedder's actual output. Conditional: only truncates+retypes `documents` if the live dimension is actually wrong. |
 | `20260727000008_drop_insecure_hybrid_search_overload.sql` | **Security fix**: drops a live, pre-existing 4-arg `hybrid_search_rls` overload that was `SECURITY DEFINER` with no `access_level`/`matter_id` filtering — an authorization bypass for any query without a doc-type hint. |
 | `20260727000009_fix_hybrid_search_ambiguous_id.sql` | Fixes an ambiguous `id` column reference in `hybrid_search_rls`'s `fused` CTE (real bug present since the function was first written; every call errored). |
+| `20260727000010_hnsw_index.sql` | HNSW vector index for the `documents` embedding column. |
+| `20261013000011_close_open_select_policies.sql` | Closes over-broad `SELECT` policies (tightens read RLS). |
+| `20261013000012_drafting.sql` | Draft Studio schema: `draft_templates`, `draft_clauses` (vector + keyword hybrid), `drafts`, `draft_sections`, `draft_versions`, `playbooks`, `playbook_rules`; owner-only RLS for drafts and SECURITY INVOKER `match_draft_clauses` / `hybrid_search_clauses` (returns `similarity` for the relevance floor). |
+| `20261013000013_draft_checks.sql` | `draft_checks` table (playbook-check history) with parent-inherited owner RLS. |
+| `20261013000014_draft_sharing.sql` | Matter-scoped draft sharing: `drafts.visibility` (`private`/`matter`) + index; replaces `drafts_select_own` with owner **or** matter-shared read, and adds parent-inherited SELECT policies for `draft_sections`/`draft_versions`/`draft_checks`. All write policies stay owner-only. |
 
 ## Deployment / operations checklist
 
-- Apply migrations 0–9 and back up before applying (see the table above and
+- Apply migrations `0`–`00014` and back up before applying (see the table above and
   [`docs/operations/migrations-and-rollbacks.md`](docs/operations/migrations-and-rollbacks.md)).
 - Set `CORS_ORIGINS` to an explicit allow-list in production (wildcard is rejected).
 - Set `SUPABASE_JWT_SECRET` in production — without it, the app/worker refuse
@@ -488,5 +542,11 @@ applying and roll back by restoring the backup — see
 - [`docs/architecture/foundation-integrity.md`](docs/architecture/foundation-integrity.md)
 - [`docs/architecture/legal-evidence-model.md`](docs/architecture/legal-evidence-model.md)
 - [`docs/security/threat-model.md`](docs/security/threat-model.md)
-- [`docs/decisions/`](docs/decisions/) (ADRs)
+- [`docs/decisions/`](docs/decisions/) (ADRs):
+  [`0001`](docs/decisions/0001-product-ui.md) product/UI,
+  [`0002`](docs/decisions/0002-authorization-approach.md) authorization,
+  [`0003`](docs/decisions/0003-legal-corpus-separation.md) legal-corpus separation,
+  [`0004`](docs/decisions/0004-migration-standard.md) migration standard,
+  [`0005`](docs/decisions/0005-citation-status-semantics.md) citation-status semantics,
+  [`0006`](docs/decisions/0006-drafting-assistant.md) drafting assistant
 - [`lawfirm-rag/CHANGELOG.md`](lawfirm-rag/CHANGELOG.md) / [`lawfirm-rag/CHANGES.md`](lawfirm-rag/CHANGES.md)

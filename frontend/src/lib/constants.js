@@ -1,9 +1,10 @@
-import { FileText, FolderKanban, History, Search, Settings, Users } from "lucide-react";
+import { FileSignature, FileText, FolderKanban, History, Search, Settings, Users } from "lucide-react";
 
 export const NAV = [
   { icon: Search, label: "Research" },
   { icon: History, label: "History" },
   { icon: FileText, label: "Documents" },
+  { icon: FileSignature, label: "Drafting" },
   { icon: FolderKanban, label: "Matters" },
   { icon: Users, label: "Team" },
   { icon: Settings, label: "Settings" },

@@ -1,0 +1,146 @@
+{
+  "_comment": "SAMPLE drafting library for development/demo. Fictional, generic content only — replace with the firm's curated precedents, standard clauses and positions before production use. Seed with: python scripts/seed_drafting_library.py",
+  "templates": [
+    {
+      "doc_type": "nda",
+      "practice_area": "commercial",
+      "jurisdiction": "ke",
+      "title": "Mutual NDA (standard)",
+      "description": "Mutual non-disclosure agreement for exploratory commercial discussions.",
+      "skeleton": [
+        {"heading": "Parties", "clause_type": "parties", "guidance": "Identify disclosing and receiving parties.", "required": true},
+        {"heading": "Definitions", "clause_type": "definitions", "guidance": "Define Confidential Information and Purpose.", "required": true},
+        {"heading": "Confidentiality Obligations", "clause_type": "confidentiality", "guidance": "Receiving party's obligations.", "required": true},
+        {"heading": "Permitted Disclosures", "clause_type": "permitted_disclosure", "guidance": "Carve-outs and compelled disclosure.", "required": true},
+        {"heading": "Term", "clause_type": "term", "guidance": "Duration of confidentiality.", "required": true},
+        {"heading": "Governing Law and Dispute Resolution", "clause_type": "governing_law", "guidance": "Governing law and forum.", "required": true}
+      ]
+    },
+    {
+      "doc_type": "lease",
+      "practice_area": "real_estate",
+      "jurisdiction": "ke",
+      "title": "Commercial lease (standard)",
+      "description": "Standard form commercial lease for office premises.",
+      "skeleton": [
+        {"heading": "Parties and Premises", "clause_type": "parties", "guidance": "Landlord, tenant, demised premises.", "required": true},
+        {"heading": "Term and Rent", "clause_type": "term", "guidance": "Term, rent, rent review.", "required": true},
+        {"heading": "Tenant Obligations", "clause_type": "tenant_obligations", "guidance": "Repair, use, compliance.", "required": true},
+        {"heading": "Landlord Obligations", "clause_type": "landlord_obligations", "guidance": "Quiet enjoyment, structural repairs.", "required": true},
+        {"heading": "Termination and Default", "clause_type": "termination", "guidance": "Forfeiture and remedies.", "required": true},
+        {"heading": "Governing Law", "clause_type": "governing_law", "guidance": "Governing law.", "required": true}
+      ]
+    },
+    {
+      "doc_type": "engagement_letter",
+      "practice_area": "general",
+      "jurisdiction": "ke",
+      "title": "Engagement letter (standard)",
+      "description": "Client engagement letter covering scope, fees and terms.",
+      "skeleton": [
+        {"heading": "Engagement and Scope", "clause_type": "scope", "guidance": "Scope of services.", "required": true},
+        {"heading": "Fees and Billing", "clause_type": "fees", "guidance": "Fee basis and disbursements.", "required": true},
+        {"heading": "Client Obligations", "clause_type": "client_obligations", "guidance": "Instructions and cooperation.", "required": true},
+        {"heading": "Conflicts and Confidentiality", "clause_type": "confidentiality", "guidance": "Confidentiality and conflicts.", "required": true},
+        {"heading": "Termination", "clause_type": "termination", "guidance": "Termination and effect.", "required": true},
+        {"heading": "Governing Law", "clause_type": "governing_law", "guidance": "Governing law.", "required": true}
+      ]
+    },
+    {
+      "doc_type": "memo",
+      "practice_area": "general",
+      "jurisdiction": "ke",
+      "title": "Legal memorandum (IRAC)",
+      "description": "Internal legal memorandum in Issue/Rule/Application/Conclusion form.",
+      "skeleton": [
+        {"heading": "Issue", "clause_type": "issue", "guidance": "The question presented.", "required": true},
+        {"heading": "Brief Answer", "clause_type": "brief_answer", "guidance": "Short conclusion.", "required": true},
+        {"heading": "Facts", "clause_type": "facts", "guidance": "Material facts.", "required": true},
+        {"heading": "Discussion", "clause_type": "discussion", "guidance": "Analysis grounded in the sources.", "required": true},
+        {"heading": "Conclusion", "clause_type": "conclusion", "guidance": "Recommendation.", "required": true}
+      ]
+    }
+  ],
+  "clauses": [
+    {
+      "doc_type": "",
+      "clause_type": "governing_law",
+      "title": "Governing law — Kenya",
+      "is_standard": true,
+      "body": "This Agreement shall be governed by and construed in accordance with the laws of the Republic of Kenya, and the parties submit to the exclusive jurisdiction of the courts of Kenya."
+    },
+    {
+      "doc_type": "",
+      "clause_type": "confidentiality",
+      "title": "Mutual confidentiality",
+      "is_standard": true,
+      "body": "Each party shall keep confidential all Confidential Information of the other party and shall not disclose it to any third party except to its officers, employees and professional advisers who need to know it for the Purpose, and shall use it solely for the Purpose."
+    },
+    {
+      "doc_type": "",
+      "clause_type": "termination",
+      "title": "Termination for convenience on notice",
+      "is_standard": true,
+      "body": "Either party may terminate this Agreement on thirty (30) days' written notice to the other party, without prejudice to any rights accrued before termination."
+    },
+    {
+      "doc_type": "",
+      "clause_type": "notices",
+      "title": "Notices",
+      "is_standard": true,
+      "body": "Any notice under this Agreement shall be in writing and delivered by hand, courier or email to the addresses of the parties set out in this Agreement, and shall be deemed received on delivery or, if by email, on the next business day."
+    },
+    {
+      "doc_type": "nda",
+      "clause_type": "permitted_disclosure",
+      "title": "Permitted disclosures",
+      "is_standard": true,
+      "body": "Confidential Information may be disclosed where required by law or by a competent regulatory authority, provided that, to the extent lawful, the disclosing party is given prompt notice so it may seek a protective order."
+    },
+    {
+      "doc_type": "lease",
+      "clause_type": "tenant_obligations",
+      "title": "Tenant repair obligation",
+      "is_standard": true,
+      "body": "The Tenant shall keep the interior of the Premises in good and substantial repair and clean condition, fair wear and tear excepted, and shall comply with all laws affecting the use of the Premises."
+    },
+    {
+      "doc_type": "engagement_letter",
+      "clause_type": "fees",
+      "title": "Fees and disbursements",
+      "is_standard": true,
+      "body": "Our fees are charged on the basis set out in the schedule to this letter, together with reasonable disbursements. Invoices are payable within fourteen (14) days of the date of the invoice."
+    },
+    {
+      "doc_type": "memo",
+      "clause_type": "conclusion",
+      "title": "Conclusion — recommendation",
+      "is_standard": true,
+      "body": "For the reasons set out above, we are of the view that the client should proceed, subject to the qualifications identified in this memorandum."
+    }
+  ],
+  "playbooks": [
+    {
+      "name": "Inbound NDA triage",
+      "doc_type": "nda",
+      "description": "Firm positions for reviewing an inbound (counterparty) NDA.",
+      "rules": [
+        {"clause_type": "governing_law", "position": "preferred", "rule_text": "Governing law should be Kenya; a foreign governing law is a fallback only.", "severity": "medium"},
+        {"clause_type": "confidentiality", "position": "required", "rule_text": "Obligations must be mutual where the firm's client also discloses information.", "severity": "high"},
+        {"clause_type": "term", "position": "preferred", "rule_text": "Confidentiality term should not exceed five (5) years.", "severity": "medium"},
+        {"clause_type": "permitted_disclosure", "position": "required", "rule_text": "There must be a carve-out for disclosures required by law or regulators.", "severity": "high"},
+        {"clause_type": "non_solicit", "position": "prohibited", "rule_text": "No non-solicitation or non-compete obligations should be accepted in a confidentiality agreement.", "severity": "high"}
+      ]
+    },
+    {
+      "name": "Commercial lease review",
+      "doc_type": "lease",
+      "description": "Firm positions for reviewing a tenant-side commercial lease.",
+      "rules": [
+        {"clause_type": "tenant_obligations", "position": "preferred", "rule_text": "Repair obligation should be limited to the interior and exclude structural repairs.", "severity": "medium"},
+        {"clause_type": "termination", "position": "preferred", "rule_text": "Tenant should have a right to terminate on a defined break date.", "severity": "medium"},
+        {"clause_type": "governing_law", "position": "required", "rule_text": "Governing law must be Kenya.", "severity": "high"}
+      ]
+    }
+  ]
+}

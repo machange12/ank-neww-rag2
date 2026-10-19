@@ -16,7 +16,7 @@ configure_logging()  # must run before any router/module below logs anything
 
 from audit import events as audit_events  # noqa: E402
 from deps import request_user_info  # noqa: E402
-from routers import admin, auth, chat, documents  # noqa: E402
+from routers import admin, auth, chat, documents, draft  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +45,7 @@ if (STATIC_DIR / "assets").exists():
 app.include_router(auth.router)
 app.include_router(chat.router)
 app.include_router(documents.router)
+app.include_router(draft.router)
 app.include_router(admin.router)
 
 

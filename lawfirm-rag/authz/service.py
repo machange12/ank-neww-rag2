@@ -67,6 +67,23 @@ def can_administer_matter_ref(user_client: Any, matter_ref: str) -> bool:
         return False
 
 
+def can_access_matter_ref(user_client: Any, matter_ref: str) -> bool:
+    """Ask the database (auth_can_access_matter_ref RPC, security definer,
+    derived from auth.uid()) whether the caller may access a matter reference.
+
+    Unlike the SQL predicate, an empty ref is refused here: the predicate maps
+    ``''`` to "everyone", which is the wrong answer for an explicit share (see
+    the drafting share endpoint)."""
+    if not matter_ref:
+        return False
+    try:
+        res = user_client.rpc("auth_can_access_matter_ref", {"p_matter_ref": matter_ref}).execute()
+        return bool(_response_data(res))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("auth_can_access_matter_ref failed for ref=%r: %s", matter_ref, exc)
+        return False
+
+
 def assert_admin(user_client: Any, user_id: str) -> UserProfile:
     """Load the profile and require the explicit admin flag."""
     profile = load_profile(user_client, user_id)
