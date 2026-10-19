@@ -34,7 +34,7 @@ and the legal-evidence/citation tooling is typed, deterministic and conservative
 | Hybrid retrieval | `search/hybrid.py` | RRF fusion of vector + BM25 via `hybrid_search_rls`; falls back to pure vector similarity |
 | Multi-query + rerank | `agents/rag_agent.py` | Query rewriting (`MultiQueryRetriever`) + optional Cohere rerank (`top_n=5`) |
 | Hallucination guard | `agents/rag_agent.py` | Never calls the LLM on zero-doc retrieval; returns a canned no-result response |
-| Source citations | `agents/rag_agent.py` | Answers cite `[Title \| Matter ID]`; sources capped at 5 |
+| Source citations | `agents/rag_agent.py` | Answers cite `[n]`; sources show the exact page range / paragraph range and a verbatim excerpt, derived from ingest provenance (never a chunk-count guess) |
 | Rate limiting | `ratelimit.py` | Per-user sliding-window token bucket, `Retry-After`, HTTP 429 |
 
 ### Security & authorization
@@ -48,6 +48,8 @@ and the legal-evidence/citation tooling is typed, deterministic and conservative
 | Matter administration checks | `authz/service.py` | `auth_can_administer_matter_ref` RPC gates every ingest target |
 | Explicit admin gate | `authz/service.py` | `/admin/users` requires `user_profiles.admin = true`, never a level/role claim |
 | Session ownership via RLS | `sessions/manager.py` | `chat_sessions_select_own` / `chat_memory_select_own` keyed to `auth.uid()` |
+| Per-account document privacy | `supabase/migrations/20261013000016_document_ownership.sql` | Uploads (`doc_scope = 'private'`) are readable only by `owner_user_id = auth.uid()` or an explicit `document_shares` recipient — in the policies **and** inside both retrieval RPCs. Admin/level-5 confer no access ([ADR-0007](docs/decisions/0007-document-privacy.md)) |
+| Explicit document sharing | `routers/documents.py`, `public.share_document_by_email()` | Owner-only, same-firm only, and refuses a recipient whose level/matter grants do not already cover the file — a share can never escalate |
 | Feedback ownership | `POST /feedback` | Session must belong to the caller or the request is 404 |
 | Service-role isolation | `search/service_client.py` | No service-role client in user-facing chat/history/search paths (enforced by a static test) |
 | Audit trail | `audit/events.py` | Append-only security events: denials, rate limits, classifications, feedback |
@@ -57,13 +59,15 @@ and the legal-evidence/citation tooling is typed, deterministic and conservative
 
 | Feature | Where | Notes |
 |---|---|---|
-| Document upload + classification | `POST /documents/upload` | Multipart; level/matter classified server-side; capped at caller ceiling |
+| Document upload + classification | `POST /documents/upload` | Multipart; level/matter classified server-side; capped at caller ceiling. **Stamped `doc_scope = 'private'` to the uploading account** |
 | Bulk Drive folder ingest | `POST /documents/ingest-folder` | Per-file server-side classification |
 | Single Drive file ingest | `POST /documents/ingest-file` | File-ID driven, classified server-side |
 | Drive webhook | `ingest/worker.py` `/drive/webhook` | HMAC channel-token verification; handles remove/trash |
 | Scheduled Drive sync | `ingest/scheduler.py` | 6-hour polling; `modifiedTime` fast-path + content-hash skip |
 | Nightly orphan cleanup | `cleanup/orphan_finder.py` | Deletes rows whose `file_id` no longer exists in Drive |
-| Extraction | `ingest/extract.py` | PDF / DOCX / plain text; repeated header/footer removal, de-hyphenation |
+| Extraction | `ingest/extract.py` | PDF / DOCX / plain text; repeated header/footer removal, de-hyphenation; **returns page / paragraph segments** |
+| Citation provenance | `ingest/embed.py` | Maps each chunk back onto its PDF page or DOCX/text paragraph via char offsets (`page_start`/`paragraph_start`, `locator_kind`); a chunk spanning a boundary reports a range ([ADR-0008](docs/decisions/0008-citation-location-provenance.md)) |
+| Provenance backfill | `scripts/reingest_provenance.py` | Re-ingests Drive-sourced files to populate real page/paragraph spans; strips the synthetic legacy `page_number` from uploads (original bytes are not retained, so those must be re-uploaded) |
 | Legal-aware chunking | `ingest/embed.py` | Kenyan-statute-aware separators (PART/SCHEDULE/WHEREAS/Section N.) |
 | Contextual retrieval | `ingest/embed.py` | `Document: <title> / Section: <heading>` prefix on embedding input only |
 | Document intelligence | `ingest/classifier.py` | gpt-4o-mini doc-type taxonomy + legal-entity extraction; best-effort |
@@ -88,12 +92,14 @@ and the legal-evidence/citation tooling is typed, deterministic and conservative
 | Grounded section generation | `agents/draft_agent.py` | Every section is generated only from the caller's authorized corpus + curated clause bank, with citations |
 | No-source guard | `agents/draft_agent.py` | Zero grounding → section is persisted as `needs_source`; the LLM is **never** asked to fill the gap |
 | Clause/template library | `drafting/library.py`, `supabase/migrations/20261013000012_drafting.sql` | Curated `draft_templates` / `draft_clauses` (vector + keyword hybrid), read under the caller's RLS |
+| Library importer | `scripts/import_drafting_library.py` | Scaffolds a manifest from a folder of the firm's own DOCX/PDF/TXT/MD, then seeds templates/clauses/playbooks (optional `--ingest` to index the source docs and record `source_file_id`) |
 | Clause relevance floor | `search/clauses.py` | `CLAUSE_MIN_SIMILARITY` drops irrelevant clauses so an unsupported section is actually flagged, not grounded on a near-miss |
 | Drafts & sections (RLS-owned) | `drafting/store.py`, `routers/draft.py` | `drafts` / `draft_sections` are owner-only (`user_id_uuid = auth.uid()`), like chat sessions |
 | Version history | `drafting/store.py` | Explicit "Save version" + a v1 baseline on create; restore is append-only |
 | Playbook checks | `agents/draft_agent.py`, `drafting/store.py` | Rule-position checks persisted to `draft_checks`; every rule yields exactly one flag (invalid/missing verdict → `unclear`) |
 | DOCX export | `drafting/export.py` | `python-docx` output with a sources appendix + footer disclaimer; also Markdown/plain text |
 | Matter-scoped sharing | `routers/draft.py`, `supabase/migrations/20261013000014_draft_sharing.sql` | Private by default; the owner may share **read-only** with a matter's team (RLS SELECT only — every write stays owner-only, non-owner writes 403) |
+| Shared-draft source redaction | `drafting/store.py` | A shared draft keeps its citation numbers, but any source the *reader* cannot see is replaced with `Restricted source — not shared with you` (title, page and quote withheld); fails closed. Applies to live sections and version snapshots |
 | Language parity | `agents/draft_agent.py` | English **and** Swahili |
 | Drafting eval | `scripts/eval_drafting.py` | Golden-set groundedness, citation validity and needs-source correctness |
 
@@ -103,17 +109,17 @@ and the legal-evidence/citation tooling is typed, deterministic and conservative
 |---|---|
 | Login screen | Email/password → JWT stored locally |
 | Dashboard shell | Sidebar nav (Research / History / Documents / Matters / Team / Settings) |
-| Research panel | Answer with copy / export / save / regenerate; prompt starters |
-| Documents panel | Upload (file + matter + access level), list indexed docs, Drive file list + ingest |
+| Research panel | Answer with copy / export / save / regenerate; prompt starters; sources rail shows the exact page/paragraph locator and a verbatim excerpt |
+| Documents panel | Upload (file + matter + access level), list indexed docs with Private/shared badges, Drive file list + ingest, and share/revoke one's own uploads by email |
 | History / Saved | Browser-local persistence (capped at 25) |
 | Drafting panel | Brief → template picker → section canvas (status/`needs_source` badges, inline edit, refine, sources rail, version history, playbook checks, DOCX/MD/TXT export, private/matter sharing with a read-only view for members) |
 | Production build | `vite build` drops straight into `lawfirm-rag/static/` for single-app serving |
 
 ### Ops & tooling
 
-- Versioned SQL migrations (`supabase/migrations/` `0000`–`00015`), single source of truth; legacy `sql/*` frozen as deprecated reference.
-- Offline pytest suite (174 tests) covering authz policy, upload acceptance, citations, legal evidence, drafting, draft sharing, playbooks, export, library seeding, schema manifest, service-role isolation, session ownership, production-env gate.
-- Schema manifest verifier (`scripts/verify_schema.py`), production `.env` gate (`scripts/check_production_env.py`), migration runner (`scripts/apply_migrations.py`), chat/ingest smoke tests, OAuth token helper.
+- Versioned SQL migrations (`supabase/migrations/` `0000`–`00016`), single source of truth; legacy `sql/*` frozen as deprecated reference.
+- Offline pytest suite (210 tests) covering authz policy, upload acceptance, citations and citation provenance, legal evidence, drafting, draft sharing, document privacy, playbooks, export, library seeding/import, schema manifest, service-role isolation, session ownership, production-env gate.
+- Schema manifest verifier (`scripts/verify_schema.py`), production `.env` gate (`scripts/check_production_env.py`), migration runner (`scripts/apply_migrations.py`), provenance backfill (`scripts/reingest_provenance.py`), drafting-library importer (`scripts/import_drafting_library.py`), chat/ingest smoke tests, OAuth token helper.
 - Retrieval-quality eval harnesses: `scripts/eval_retrieval.py` (golden-set hit-rate / zero-result-rate against a running backend), `scripts/eval_golden.py` (synthetic-doc accuracy) and `scripts/eval_drafting.py` (Draft Studio groundedness / citation validity / needs-source correctness).
 - Streamlit test UI (`streamlit_app.py`) with login/chat/upload/admin tabs.
 
@@ -167,6 +173,9 @@ The following were identified as weaknesses and have since been resolved:
   Fixed in `scripts/verify_schema.py`; live run is now `SCHEMA OK`. An end-to-end
   RLS/RPC smoke test (owner isolation, matter-scoped read-only sharing, clause
   retrieval + relevance floor) passes against the live DB.
+  **`00016` (per-account document privacy) is written and tested but not yet
+  applied live** — apply it before deploying the matching code, then run
+  `scripts/reingest_provenance.py` to backfill page/paragraph provenance.
 - **Live database migrated to `0000`–`0009` and verified (`scripts/verify_schema.py` — SCHEMA OK).**
   The live Supabase DB had never had any migration applied (no
   `schema_migrations` table at all) and had evolved a bespoke schema that
@@ -392,7 +401,7 @@ FastAPI app (app.py)  +  ingest worker (ingest/worker.py)
    Supabase PostgREST        ingest/worker paths
         │                       │
         ▼                       ▼
-    Postgres + RLS + migrations 0000..00015
+    Postgres + RLS + migrations 0000..00016
         ├─ chat_sessions / chat_memory        (ownership RLS: user_id_uuid)
         ├─ user_profiles / matter_access      (authorization facts)
         ├─ documents / document_metadata      (retrieval, matter + level RLS)
@@ -413,7 +422,7 @@ Pure-logic packages (no DB): `authz/`, `citations/`, `corpus/legal_evidence/`,
 - **Storage:** Supabase (Postgres + pgvector, PostgREST + RLS), Google Drive API.
 - **Frontend:** React 19, Vite, Tailwind CSS, lucide-react (no router, no state
   library, no TypeScript).
-- **Tests:** pytest (174 offline tests); `requests`-based integration script.
+- **Tests:** pytest (210 offline tests); `requests`-based integration script.
 
 ## Repo layout
 
@@ -468,7 +477,7 @@ Full setup (Supabase schema, Google Drive OAuth, users, access levels) is in
 
 ```bash
 cd lawfirm-rag
-../.venv/Scripts/python -m pytest tests/ -q                # 174 offline tests (Windows)
+../.venv/Scripts/python -m pytest tests/ -q                # 210 offline tests (Windows)
 # ../.venv/bin/python -m pytest tests/ -q                  # macOS / Linux
 ../.venv/Scripts/python scripts/verify_schema.py --manifest-only
 ../.venv/Scripts/python tests/integration_test.py           # live backend checks
@@ -536,11 +545,15 @@ applying and roll back by restoring the backup — see
 | `20261013000013_draft_checks.sql` | `draft_checks` table (playbook-check history) with parent-inherited owner RLS. |
 | `20261013000014_draft_sharing.sql` | Matter-scoped draft sharing: `drafts.visibility` (`private`/`matter`) + index; replaces `drafts_select_own` with owner **or** matter-shared read, and adds parent-inherited SELECT policies for `draft_sections`/`draft_versions`/`draft_checks`. All write policies stay owner-only. |
 | `20261013000015_draft_section_metadata.sql` | Persists `draft_sections.guidance` + `draft_sections.required` (additive, idempotent) so the skeleton's drafting hint and required flag survive a reload instead of existing only on the create response. |
+| `20261013000016_document_ownership.sql` | Per-account document privacy: `documents`/`document_metadata` gain `owner_user_id` + `doc_scope` (`corpus`/`private`) with a fail-closed CHECK; `document_shares` (owner-managed); SECURITY DEFINER `auth_owns_document`, `auth_document_shared_with_me`, `share_document_by_email`, `unshare_document`, `list_document_shares`; SELECT policies and both retrieval RPCs gain the owner-or-sharee predicate; existing `upload_<uuid>_...` rows backfilled to private ([ADR-0007](docs/decisions/0007-document-privacy.md)). |
 
 ## Deployment / operations checklist
 
-- Apply migrations `0`–`00015` and back up before applying (see the table above and
+- Apply migrations `0`–`00016` and back up before applying (see the table above and
   [`docs/operations/migrations-and-rollbacks.md`](docs/operations/migrations-and-rollbacks.md)).
+  `00016` is safe to apply before the matching app deploy (new rows default to
+  `corpus`, never to a broken private state); deploy the code immediately after,
+  then run `scripts/reingest_provenance.py`.
 - Set `CORS_ORIGINS` to an explicit allow-list in production (wildcard is rejected).
 - Set `SUPABASE_JWT_SECRET` in production — without it, the app/worker refuse
   to accept tokens rather than falling back to unverified decoding.
@@ -573,5 +586,7 @@ applying and roll back by restoring the backup — see
   [`0003`](docs/decisions/0003-legal-corpus-separation.md) legal-corpus separation,
   [`0004`](docs/decisions/0004-migration-standard.md) migration standard,
   [`0005`](docs/decisions/0005-citation-status-semantics.md) citation-status semantics,
-  [`0006`](docs/decisions/0006-drafting-assistant.md) drafting assistant
+  [`0006`](docs/decisions/0006-drafting-assistant.md) drafting assistant,
+  [`0007`](docs/decisions/0007-document-privacy.md) per-account document privacy,
+  [`0008`](docs/decisions/0008-citation-location-provenance.md) citation location provenance
 - [`lawfirm-rag/CHANGELOG.md`](lawfirm-rag/CHANGELOG.md) / [`lawfirm-rag/CHANGES.md`](lawfirm-rag/CHANGES.md)

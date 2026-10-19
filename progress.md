@@ -4,9 +4,10 @@
 RAG. Reference products: Harvey (Assistant → Vault → in-Word editing) and Legora
 (Editor → playbook checks → deliver in Word).
 
-**Branch state:** work is uncommitted on top of `b1a43e2e`. Next migration slot
-`20261013000016`, next ADR `0007`. Live DB is now migrated through
-`20261013000015` (was stuck at `0000`–`0009`) and the drafting library is seeded.
+**Branch state:** work is uncommitted on top of `b1a43e2e`. Migrations `0000`–`00016`
+exist; `00016` (per-account document privacy) is **not yet applied to the live DB**.
+ADRs now run to `0008`. Live DB is migrated through `20261013000015` (was stuck at
+`0000`–`0009`) and the drafting library is seeded.
 
 **Safety model (non-negotiable):** every section is grounded in the authorized
 corpus + curated clause bank. If nothing supports a section, it is persisted as
@@ -797,9 +798,12 @@ $env:EVAL_EMAIL="partner@ak.law"; $env:EVAL_PASSWORD="..."
 ---
 
 ## Open questions / decisions for next session
-1. **Seed content:** real firm templates/clauses/playbook positions are needed —
-   current `seed_data.json` is fictional placeholder. Who provides them, and in
-   what format?
+1. ~~**Seed content:** real firm templates/clauses/playbook positions are needed
+   — current `seed_data.json` is fictional placeholder.~~ **Resolved
+   (2026-10-19):** `scripts/import_drafting_library.py` imports a folder of the
+   firm's own DOCX/PDF/TXT/MD via an editable manifest (`--scaffold` →
+   `--apply [--dry-run] [--ingest]`). The firm supplies the files; nothing passes
+   through a developer. `seed_data.json` remains the offline/CI fixture.
 2. ~~DOCX house style~~ — **decided:** minimal default (title/sections/endnotes/
    footer disclaimer); firm letterhead can be layered on later.
 3. ~~Draft sharing~~ — **decided & shipped:** matter-scoped, **read-only**,
@@ -820,6 +824,12 @@ $env:EVAL_EMAIL="partner@ak.law"; $env:EVAL_PASSWORD="..."
    is the "OCI walkthrough" section above. Nothing has been provisioned; the
    three blockers that would have stopped the first deploy are already fixed
    (`8dbed75d`, `b25490c9`).
+8. **Apply `20261013000016` to the live DB** (per-account document privacy) —
+   written and offline-tested, not yet applied. Order: apply migration → deploy
+   code → `scripts/reingest_provenance.py`. Applying the migration alone is safe
+   (new rows default to `corpus`); uploads only become private once the new code
+   is live, so keep that window short. Also: existing UI uploads must be
+   re-uploaded for page-accurate citations.
 
 ## Gotchas / notes
 - `.venv` is at repo root (see above).
@@ -846,3 +856,94 @@ $env:EVAL_EMAIL="partner@ak.law"; $env:EVAL_PASSWORD="..."
   read-only UI; the frontend should treat `is_owner === false` as no-edit.
 - `chat.py:60-92` `_resolve_chat_identity` is the chat-specific auth path; the
   drafting router uses the simpler `ctx_rbac_from_token` + `make_user_client`.
+
+---
+
+## Three fixes from the 2026-10-19 review: citations, privacy, seed content
+
+All three are implemented and tested offline (210 tests). The only thing not done
+is applying `00016` to the live DB. Read this section before the OCI work.
+
+### 1. Citations quote the real page / paragraph
+
+Before: `metadata.page_number` was `chunk_index // chunks_per_page` — a guess that
+was `0` for every DOCX/TXT. Nothing in the UI showed *where* a quote came from.
+
+Now:
+- `ingest/extract.py` → `ExtractedDocument(text, total_pages, segments,
+  locator_kind)`; one `Segment` per PDF page or per non-empty DOCX/text
+  paragraph.
+- `ingest/embed.py` maps each chunk onto those spans via char offsets
+  (`page_start/page_end` or `paragraph_start/paragraph_end`, plus
+  `locator_kind`). `CHUNKING_VERSION` is `…-v3`. A chunk crossing a boundary
+  reports a range (`pp. 12–13`) rather than guessing one end.
+- `agents/rag_agent.py::_sources_from_docs` aggregates every retrieved chunk of
+  a document into one source, with the document-level range envelope, a
+  `label` (`p. 12` / `pp. 12–13` / `¶ 4` / `¶¶ 4–6`) and a ~320-char verbatim
+  `quote`. The same label appears in the prompt context header (so the model can
+  see which chunk is which page) and the prompt forbids inventing a page.
+- `/documents/view` prefixes each chunk with `===== p. 12 =====` so a reader can
+  find the cited passage in the reassembled text.
+- Frontend: sources rail + Draft Studio sources show the label badge and the
+  quote; DOCX endnotes use the locator.
+- Backfill: `scripts/reingest_provenance.py` (Drive files re-ingested with
+  `force=True`; uploads get the fake `page_number` **stripped** because their
+  original bytes were never stored — re-upload those to get pages).
+
+### 2. Per-account document privacy (ADR-0007)
+
+Before: visibility was only level + matter. Uploader identity survived only as
+`upload_<uuid>_<filename>`, unread by any policy — so any colleague at the right
+level (including an admin) could read anyone's upload.
+
+Now:
+- `documents` / `document_metadata` gain `owner_user_id` + `doc_scope`
+  (`corpus` | `private`), with
+  `CHECK (doc_scope <> 'private' or owner_user_id is not null)` so a private row
+  can never exist without an owner (fail-closed by construction).
+- `upsert_file(..., owner_user_id=, doc_scope=)` — no guessing defaults; the
+  upload endpoint passes the authenticated id + `private`, Drive/worker/webhook
+  paths stay `corpus`.
+- SELECT policies and **both** retrieval RPCs (`match_documents_rls`,
+  `hybrid_search_rls`) admit the owner and explicit sharees only. Admin /
+  level-5 add nothing. Corpus rows behave exactly as before.
+- `document_shares` + `share_document_by_email` / `unshare_document` /
+  `list_document_shares` (SECURITY DEFINER, owner-only, same-firm only, and the
+  recipient must already satisfy the document's level + matter). The INSERT
+  policy also calls `auth_owns_document(file_id)` — without it any user could
+  insert a share row naming themselves and be granted the file.
+- Shared drafts: `drafting/store.py::_redact_unreadable_sources` replaces any
+  source the reader cannot see with `Restricted source — not shared with you`
+  (title/page/quote withheld, citation number kept), for live sections **and**
+  version snapshots. Fails closed.
+- UI: documents list shows `Private` / `Shared with you`; the owner gets a Share
+  control (email in, revoke per person).
+
+**Deploy order matters:** apply `00016` first, then deploy the code, then run
+`scripts/reingest_provenance.py`. Applying `00016` alone is safe — new rows
+default to `corpus` (never a half-private state) — but uploads only become
+private once the new upload code is live, so don't leave that gap long.
+
+### 3. Seed content importer (no content through the assistant)
+
+`scripts/import_drafting_library.py` + `drafting/library_sources/README.md`:
+
+```
+python scripts/import_drafting_library.py --scaffold drafting/library_sources
+# edit drafting/library_sources/library.json
+python scripts/import_drafting_library.py drafting/library_sources --apply --dry-run
+python scripts/import_drafting_library.py drafting/library_sources --apply --ingest
+```
+
+Drop real DOCX/PDF/TXT/MD into the folder, scaffold a manifest, fill in
+`doc_type` / `clause_type` / `access_level`, apply. `--ingest` also indexes each
+source document into the firm corpus and records `source_file_id` on the clause.
+Idempotent by title/name. Nothing is seeded automatically and no firm content
+passes through a developer.
+
+### Known follow-ups
+- `00016` still needs a live apply + `verify_schema.py` run (see the OCI section
+  for the in-process invocation).
+- Existing UI uploads need re-uploading for page-accurate citations.
+- Corpus documents with `matter_id = ''` still have no tenant gate (a pre-existing
+  gap, unchanged here); with a single firm tenant it is not exploitable today.

@@ -7,6 +7,53 @@ available in `sql/` (now deprecated in favour of `supabase/migrations`).
 
 All dates are 2026.
 
+## [2026-10-19] — Document privacy, citation provenance, library import
+
+### Per-account document privacy (migration `20261013000016`, ADR-0007)
+
+- `documents` / `document_metadata` gain `owner_user_id` and `doc_scope`
+  (`corpus` | `private`), with a fail-closed
+  `CHECK (doc_scope <> 'private' or owner_user_id is not null)`. Existing
+  `upload_<uuid>_<filename>` rows are backfilled to private.
+- `upsert_file()` now requires the caller to state ownership: the upload
+  endpoint stamps the authenticated user with `doc_scope="private"`; Drive
+  ingest, the polling worker and the Drive webhook stay `corpus`.
+- SELECT policies **and both retrieval RPCs** (`match_documents_rls`,
+  `hybrid_search_rls`) admit a private row only for its owner or a named
+  `document_shares` recipient. Admin and high access levels confer nothing.
+- `document_shares` plus SECURITY DEFINER `auth_owns_document`,
+  `auth_document_shared_with_me`, `share_document_by_email`,
+  `unshare_document`, `list_document_shares`. Shares are owner-only, same-firm,
+  and cannot exceed the document's level or matter scope.
+- Shared drafts no longer leak a private source: `drafting/store.py` redacts any
+  source the reader cannot see (title/page/quote withheld, citation number kept)
+  in live sections and version snapshots, failing closed.
+- Endpoints: `POST /documents/share`, `DELETE /documents/share`,
+  `GET /documents/shares`. UI: Private/Shared badges + share/revoke control.
+
+### Real page and paragraph citations (ADR-0008)
+
+- `ingest/extract.py` returns page/paragraph segments; `ingest/embed.py` maps
+  chunks onto them through character offsets and records
+  `page_start`/`page_end` or `paragraph_start`/`paragraph_end` plus
+  `locator_kind` (`CHUNKING_VERSION …-v3`). Chunks that span a boundary report a
+  range instead of guessing.
+- `agents/rag_agent.py` aggregates all retrieved locations per document and adds
+  a `label` (`p. 12` / `pp. 12–13` / `¶ 4`) and a verbatim ~320-char `quote` to
+  each source; DOCX endnotes and the in-app viewer use the same locator. The
+  answer keeps plain `[n]`, and the prompt forbids inventing a page.
+- `scripts/reingest_provenance.py` backfills Drive-sourced documents and strips
+  the synthetic legacy `page_number` from uploads (original bytes are not
+  retained, so those files need re-uploading for pages).
+
+### Drafting-library importer (`scripts/import_drafting_library.py`)
+
+- Scaffolds an editable manifest from a folder of the firm's own DOCX/PDF/TXT/MD,
+  then seeds templates/clauses/playbooks idempotently; `--dry-run` writes the
+  assembled JSON, `--ingest` indexes each source document and records
+  `source_file_id` on the clause. Documented in
+  `drafting/library_sources/README.md`.
+
 ## [Unreleased] — Foundation integrity hardening
 
 ### WP2 — Server-side authorization and audit integration (available)

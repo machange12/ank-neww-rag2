@@ -12,6 +12,8 @@ threats apply to its network path.
 - **A4** Legal corpus (`legal_*`) and citations.
 - **A5** Audit trail (`audit_security_events`).
 - **A6** Service-role key and JWT secrets (`.env`).
+- **A7** Document ownership and share grants (`documents.owner_user_id`,
+  `documents.doc_scope`, `document_shares`).
 
 ## Trust boundaries
 
@@ -25,6 +27,9 @@ threats apply to its network path.
   matter_ids, access_level hint) is a hint or is ignored.
 - RLS is the enforcement boundary for reads; the backend policy functions are
   the enforcement boundary for classification/ingest decisions.
+- The service-role write path bypasses RLS, so any authorization fact it must
+  honour (access_level, matter_id, **owner_user_id/doc_scope**) has to be
+  stamped at write time — the database cannot infer it afterwards.
 
 ## Threats and mitigations
 
@@ -42,6 +47,10 @@ threats apply to its network path.
 | T10 | Privilege escalation via feedback/history writes | Ownership checks on feedback; history inserts stamped with the caller's `user_id`/`tenant_id`. |
 | T11 | Secrets leakage | `.env` gitignored; no secrets in commits; service-role confined to allowed modules. |
 | T12 | Audit trail tampering | `audit_security_events` is append-only (RLS/grants); writes go through the dedicated audit path. |
+| T13 | User reads another account's upload (list, open or retrieve it) | `documents.doc_scope = 'private'` rows are readable only by `owner_user_id = auth.uid()` or an explicit `document_shares` recipient — in the SELECT policies **and** inside `match_documents_rls` / `hybrid_search_rls`. Admin/level-5 confer no access (ADR-0007). |
+| T14 | User forges a share to grant themselves another account's file | `document_shares` INSERT policy requires `created_by = auth.uid()` **and** `auth_owns_document(file_id)`; sharing itself goes through `share_document_by_email()` (SECURITY DEFINER), which requires ownership. |
+| T15 | Shared draft leaks a private source's title/page/quote | Draft sections and version snapshots are redacted on read against the reader's own RLS-visible `file_id` set; fails closed (ADR-0007 §6). |
+| T16 | Upload stored with no owner and silently firm-wide | `doc_scope` defaults to `'corpus'` and `CHECK (doc_scope <> 'private' or owner_user_id is not null)`; `upsert_file()` rejects `private` without an owner. |
 
 ## Residual risks
 
@@ -55,6 +64,11 @@ threats apply to its network path.
 - **R4** The frontend's handling of tokens (storage, expiry) is out of scope
   here; use standard JWT hygiene (short expiry, secure storage, revocation via
   Supabase).
+- **R5** The original bytes of a UI upload are not retained, so page/paragraph
+  provenance cannot be recovered for files ingested before the provenance change;
+  those citations show no page until the file is re-uploaded. Raw uploaded bytes
+  are also therefore unavailable for any future re-analysis (re-chunking,
+  re-classification) — only the extracted text and chunks persist.
 
 ## Control owners
 
