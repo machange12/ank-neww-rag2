@@ -78,6 +78,125 @@ def test_clean_text_still_public():
     assert clean_text("Hello\n\n\n\nWorld") == "Hello\n\nWorld"
 
 
+def _build_pdf(pages: list[str]) -> bytes:
+    """Build a small, valid PDF with one text line per page.
+
+    Hand-rolled because no PDF-*writing* library is a dependency; pypdf is only
+    used to read. This keeps the page-provenance path covered against real PDF
+    bytes rather than a synthetic stand-in.
+    """
+    objects: list[tuple[int, bytes]] = []
+    page_ids: list[int] = []
+    content_ids: list[int] = []
+    nxt = 3
+    for _ in range(len(pages)):
+        page_ids.append(nxt)
+        nxt += 1
+        content_ids.append(nxt)
+        nxt += 1
+    font_id = nxt
+
+    def obj(num: int, body: bytes | str) -> None:
+        objects.append((num, body if isinstance(body, bytes) else body.encode()))
+
+    obj(1, b"<< /Type /Catalog /Pages 2 0 R >>")
+    kids = " ".join(f"{pid} 0 R" for pid in page_ids)
+    obj(2, f"<< /Type /Pages /Kids [{kids}] /Count {len(pages)} >>")
+    for index, text in enumerate(pages):
+        stream = f"BT /F1 12 Tf 72 720 Td ({text}) Tj ET".encode()
+        obj(
+            page_ids[index],
+            f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+            f"/Contents {content_ids[index]} 0 R "
+            f"/Resources << /Font << /F1 {font_id} 0 R >> >> >>",
+        )
+        obj(
+            content_ids[index],
+            b"<< /Length " + str(len(stream)).encode() + b" >>\nstream\n" + stream + b"\nendstream",
+        )
+    obj(font_id, b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
+
+    out = bytearray(b"%PDF-1.4\n")
+    offsets: dict[int, int] = {}
+    for num, body in sorted(objects):
+        offsets[num] = len(out)
+        out += f"{num} 0 obj\n".encode() + body + b"\nendobj\n"
+    xref_offset = len(out)
+    size = max(offsets) + 1
+    out += f"xref\n0 {size}\n".encode() + b"0000000000 65535 f \n"
+    for num in range(1, size):
+        out += f"{offsets[num]:010d} 00000 n \n".encode()
+    out += (
+        f"trailer\n<< /Size {size} /Root 1 0 R >>\nstartxref\n{xref_offset}\n%%EOF\n"
+    ).encode()
+    return bytes(out)
+
+
+def test_pdf_extraction_reports_real_pages():
+    raw = _build_pdf(
+        ["Alpha page one content", "Beta page two content", "Gamma page three content"]
+    )
+
+    extracted = extract_document(raw, "application/pdf")
+
+    assert extracted.locator_kind == "page"
+    assert extracted.total_pages == 3
+    assert [s.page for s in extracted.segments] == [1, 2, 3]
+    # Each segment must address its own page's words, not merely overlap the text.
+    assert "Alpha" in extracted.text[extracted.segments[0].start:extracted.segments[0].end]
+    assert "Beta" in extracted.text[extracted.segments[1].start:extracted.segments[1].end]
+    assert "Gamma" in extracted.text[extracted.segments[2].start:extracted.segments[2].end]
+
+
+def test_pdf_blank_page_does_not_shift_real_page_numbers():
+    raw = _build_pdf(["Alpha first", " ", "Gamma third"])
+
+    extracted = extract_document(raw, "application/pdf")
+
+    assert extracted.total_pages == 3
+    # The blank page produces no segment, but the surviving segments keep the
+    # real page numbers (1 and 3) instead of being renumbered 1 and 2.
+    assert [s.page for s in extracted.segments] == [1, 3]
+    assert "Alpha" in extracted.text[extracted.segments[0].start:extracted.segments[0].end]
+    assert "Gamma" in extracted.text[extracted.segments[1].start:extracted.segments[1].end]
+
+
+def test_pdf_chunk_reports_the_page_it_came_from():
+    raw = _build_pdf(
+        ["Alpha page one content", "Beta page two content", "Gamma page three content"]
+    )
+    extracted = extract_document(raw, "application/pdf")
+
+    chunks = chunk_text(
+        extracted.text,
+        chunk_size=8,
+        chunk_overlap=0,
+        segments=extracted.segments,
+        locator_kind=extracted.locator_kind,
+    )
+
+    assert [(c.page_start, c.page_end) for c in chunks] == [(1, 1), (2, 2), (3, 3)]
+    assert chunks[1].text.strip() == "Beta page two content"
+
+
+def test_pdf_chunk_straddling_pages_reports_a_range():
+    raw = _build_pdf(
+        ["Alpha page one content", "Beta page two content", "Gamma page three content"]
+    )
+    extracted = extract_document(raw, "application/pdf")
+
+    chunks = chunk_text(
+        extracted.text,
+        chunk_size=10,
+        chunk_overlap=0,
+        segments=extracted.segments,
+        locator_kind=extracted.locator_kind,
+    )
+
+    # The first chunk holds all of page 1 and part of page 2: report the range.
+    assert (chunks[0].page_start, chunks[0].page_end) == (1, 2)
+
+
 # ---------------------------------------------------------------------------
 # Chunking maps back onto the segments
 # ---------------------------------------------------------------------------

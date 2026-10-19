@@ -118,7 +118,7 @@ and the legal-evidence/citation tooling is typed, deterministic and conservative
 ### Ops & tooling
 
 - Versioned SQL migrations (`supabase/migrations/` `0000`–`00016`), single source of truth; legacy `sql/*` frozen as deprecated reference.
-- Offline pytest suite (210 tests) covering authz policy, upload acceptance, citations and citation provenance, legal evidence, drafting, draft sharing, document privacy, playbooks, export, library seeding/import, schema manifest, service-role isolation, session ownership, production-env gate.
+- Offline pytest suite (214 tests) covering authz policy, upload acceptance, citations and citation provenance, legal evidence, drafting, draft sharing, document privacy, playbooks, export, library seeding/import, schema manifest, service-role isolation, session ownership, production-env gate.
 - Schema manifest verifier (`scripts/verify_schema.py`), production `.env` gate (`scripts/check_production_env.py`), migration runner (`scripts/apply_migrations.py`), provenance backfill (`scripts/reingest_provenance.py`), drafting-library importer (`scripts/import_drafting_library.py`), chat/ingest smoke tests, OAuth token helper.
 - Retrieval-quality eval harnesses: `scripts/eval_retrieval.py` (golden-set hit-rate / zero-result-rate against a running backend), `scripts/eval_golden.py` (synthetic-doc accuracy) and `scripts/eval_drafting.py` (Draft Studio groundedness / citation validity / needs-source correctness).
 - Streamlit test UI (`streamlit_app.py`) with login/chat/upload/admin tabs.
@@ -173,9 +173,12 @@ The following were identified as weaknesses and have since been resolved:
   Fixed in `scripts/verify_schema.py`; live run is now `SCHEMA OK`. An end-to-end
   RLS/RPC smoke test (owner isolation, matter-scoped read-only sharing, clause
   retrieval + relevance floor) passes against the live DB.
-  **`00016` (per-account document privacy) is written and tested but not yet
-  applied live** — apply it before deploying the matching code, then run
-  `scripts/reingest_provenance.py` to backfill page/paragraph provenance.
+  **`00016` (per-account document privacy) was applied and verified live**
+  (`SCHEMA OK`): 15 uploads were backfilled to private, two-account RLS isolation
+  was proven (a level-5 admin sees zero of another account's uploads), and the
+  full share → access → revoke lifecycle was exercised. The Drive provenance
+  re-ingest is pending a refreshed Google refresh token
+  (`scripts/reingest_provenance.py --only drive`).
 - **Live database migrated to `0000`–`0009` and verified (`scripts/verify_schema.py` — SCHEMA OK).**
   The live Supabase DB had never had any migration applied (no
   `schema_migrations` table at all) and had evolved a bespoke schema that
@@ -422,7 +425,7 @@ Pure-logic packages (no DB): `authz/`, `citations/`, `corpus/legal_evidence/`,
 - **Storage:** Supabase (Postgres + pgvector, PostgREST + RLS), Google Drive API.
 - **Frontend:** React 19, Vite, Tailwind CSS, lucide-react (no router, no state
   library, no TypeScript).
-- **Tests:** pytest (210 offline tests); `requests`-based integration script.
+- **Tests:** pytest (214 offline tests); `requests`-based integration script.
 
 ## Repo layout
 
@@ -477,7 +480,7 @@ Full setup (Supabase schema, Google Drive OAuth, users, access levels) is in
 
 ```bash
 cd lawfirm-rag
-../.venv/Scripts/python -m pytest tests/ -q                # 210 offline tests (Windows)
+../.venv/Scripts/python -m pytest tests/ -q                # 214 offline tests (Windows)
 # ../.venv/bin/python -m pytest tests/ -q                  # macOS / Linux
 ../.venv/Scripts/python scripts/verify_schema.py --manifest-only
 ../.venv/Scripts/python tests/integration_test.py           # live backend checks

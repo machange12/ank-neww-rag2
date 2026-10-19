@@ -4,10 +4,10 @@
 RAG. Reference products: Harvey (Assistant → Vault → in-Word editing) and Legora
 (Editor → playbook checks → deliver in Word).
 
-**Branch state:** work is uncommitted on top of `b1a43e2e`. Migrations `0000`–`00016`
-exist; `00016` (per-account document privacy) is **not yet applied to the live DB**.
-ADRs now run to `0008`. Live DB is migrated through `20261013000015` (was stuck at
-`0000`–`0009`) and the drafting library is seeded.
+**Branch state:** work is committed and pushed to `main`. Migrations `0000`–`00016`
+exist and **`00016` is applied to the live DB and verified**. ADRs run to `0008`.
+Live DB is migrated through `20261013000016` (was stuck at `0000`–`0009`) and the
+drafting library is seeded.
 
 **Safety model (non-negotiable):** every section is grounded in the authorized
 corpus + curated clause bank. If nothing supports a section, it is persisted as
@@ -824,12 +824,11 @@ $env:EVAL_EMAIL="partner@ak.law"; $env:EVAL_PASSWORD="..."
    is the "OCI walkthrough" section above. Nothing has been provisioned; the
    three blockers that would have stopped the first deploy are already fixed
    (`8dbed75d`, `b25490c9`).
-8. **Apply `20261013000016` to the live DB** (per-account document privacy) —
-   written and offline-tested, not yet applied. Order: apply migration → deploy
-   code → `scripts/reingest_provenance.py`. Applying the migration alone is safe
-   (new rows default to `corpus`); uploads only become private once the new code
-   is live, so keep that window short. Also: existing UI uploads must be
-   re-uploaded for page-accurate citations.
+8. ~~**Apply `20261013000016` to the live DB** (per-account document privacy).~~
+   **Done (2026-10-19):** applied and verified live (`SCHEMA OK`); account
+   isolation and the full share lifecycle were proven against the live DB.
+   Remaining: the Drive provenance re-ingest is blocked on an expired Google
+   refresh token — see "Live verification" above.
 
 ## Gotchas / notes
 - `.venv` is at repo root (see above).
@@ -861,8 +860,9 @@ $env:EVAL_EMAIL="partner@ak.law"; $env:EVAL_PASSWORD="..."
 
 ## Three fixes from the 2026-10-19 review: citations, privacy, seed content
 
-All three are implemented and tested offline (210 tests). The only thing not done
-is applying `00016` to the live DB. Read this section before the OCI work.
+All three are implemented and tested offline (214 tests). `00016` is applied to the
+live DB and verified (see "Live verification" below). Read this section before the
+OCI work.
 
 ### 1. Citations quote the real page / paragraph
 
@@ -941,9 +941,37 @@ source document into the firm corpus and records `source_file_id` on the clause.
 Idempotent by title/name. Nothing is seeded automatically and no firm content
 passes through a developer.
 
+### Live verification (2026-10-19)
+
+- `apply_migrations.py` applied `20261013000016` (the only pending one, 17 total).
+  `verify_schema.py` against the live DB → **SCHEMA OK**.
+- Backfill: 217 upload chunk rows across 15 files became `doc_scope='private'`
+  with an owner; **0** private rows without an owner; 47 corpus rows untouched.
+- Real two-account RLS test (impersonating each user with
+  `set local role authenticated` + `request.jwt.claims`):
+  - owner A (level 5 **admin**) sees its own 213 private rows, **0** of B's, 47 corpus;
+  - owner B (level 4) sees its own 1 private row, **0** of A's, 47 corpus.
+  So even an admin cannot read another account's upload.
+- Full share lifecycle live: non-owner share refused → owner shares by email →
+  recipient sees the file → owner revokes → recipient sees 0. Run in a rolled-back
+  transaction; live `document_shares` is still empty.
+- Fake page numbers stripped from all 15 uploads (0 upload chunks still carry
+  `page_number`); re-running the stripper reports `already ok=15`.
+- **Blocked:** the Drive re-ingest (21 files) fails with
+  `Google Drive authentication failed. The stored refresh token is expired or
+  revoked.` Re-run `python scripts/get_refresh_token.py` and update
+  `GOOGLE_REFRESH_TOKEN`, then
+  `python scripts/reingest_provenance.py --only drive`.
+  This does **not** leave wrong citations: every Drive chunk carries
+  `page_number = 0`, which ADR-0008 treats as *unknown*, so those sources show
+  no page until the re-ingest succeeds.
+
 ### Known follow-ups
-- `00016` still needs a live apply + `verify_schema.py` run (see the OCI section
-  for the in-process invocation).
+- Drive re-ingest blocked on the expired Drive refresh token (above).
 - Existing UI uploads need re-uploading for page-accurate citations.
 - Corpus documents with `matter_id = ''` still have no tenant gate (a pre-existing
   gap, unchanged here); with a single firm tenant it is not exploitable today.
+- An uploader with **no `user_profiles` row** (or a level below the document's)
+  cannot see their own private upload, because the pre-existing level gate still
+  applies to private rows. It fails closed; assign a profile before relying on
+  that account.
