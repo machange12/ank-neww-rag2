@@ -1,0 +1,29 @@
+# Build context is the repo root. Keep the image small and never bake secrets in.
+.git/
+.github/
+.venv/
+**/.venv/
+**/node_modules/
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+
+# Secrets / local state — never in an image.
+.env
+**/.env
+*.log
+**/*.log
+
+# Frontend build output is produced inside the Dockerfile (stage 1), so the
+# committed copy is not needed in the context.
+frontend/dist/
+lawfirm-rag/static/
+
+# Editor / OS noise.
+.vscode/
+.idea/
+.DS_Store
+
+# Tests and dev-only requirements aren't needed at runtime.
+lawfirm-rag/tests/
+lawfirm-rag/requirements-local.txt

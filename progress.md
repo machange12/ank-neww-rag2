@@ -318,6 +318,52 @@ owner-only (RLS + a router guard that returns 403).
 
 ---
 
+## OCI hosting (Phase 1 of the Oracle move)
+
+Decision (with the user): split the Oracle move into independent tracks.
+**Phase 1 = hosting only on Oracle Cloud (OCI)**, keeping Supabase/Postgres
+unchanged. The **database** move to Oracle is a separate multi-week rewrite
+(pgvector→Oracle AI Vector Search, tsvector/GIN→Oracle Text, RLS→VPD, and no
+PostgREST drop-in for the per-request RLS boundary) — not started.
+
+Deploy artifacts added:
+- **`lawfirm-rag/Dockerfile`** — multi-stage: stage 1 builds the Vite frontend,
+  stage 2 is a `python:3.11-slim` runtime that installs `requirements.txt`
+  (no torch — a hosted embedder is required), runs as non-root, exposes
+  `HEALTHCHECK` on `/healthz`, and runs `uvicorn app:app --workers 1`. Layout
+  mirrors the checkout (`/srv/lawfirm-rag/lawfirm-rag`) so `config.py`'s
+  `ROOT_DIR` and an optional mounted `.env` resolve as on the host.
+- **`.dockerignore`** (repo root), **`docker-compose.yml`** (repo root; app
+  bound to `127.0.0.1:8000`, `env_file: .env`).
+- **`deploy/oci/lawfirm-rag.service`** — systemd unit for the app.
+- **`deploy/oci/lawfirm-rag-worker.service`** — systemd unit for the worker
+  (nightly cleanup + Drive webhook + manual re-ingest).
+- **`deploy/oci/nginx-lawfirm-rag.conf`** — TLS reverse proxy, `proxy_buffering
+  off` + 300s timeouts (chat SSE), `client_max_body_size 30m`.
+- **`docs/operations/oci-deployment.md`** — full runbook (networking, firewalld/
+  SELinux, both deploy paths, prod `.env` checklist, verify, updates/rollback).
+  Linked from the README "Further reading".
+
+Key facts captured: the **app** runs the 6-hour Drive poll in-process; the
+**worker** runs the nightly cleanup — different jobs, so **run both**, no double
+polling. (Earlier drafts wrongly warned the worker also polls Drive; corrected.)
+
+Also fixed en route: **`.env.example`** was stale and would have broken the
+deploy — `EMBEDDING_DIM=1536`/`CHUNK_SIZE=750` contradicted the live
+`vector(768)` schema and `config.py` (768 / 900 / 80). Rewritten to match reality
+(768, the Gemini remote-embedder block, `INGEST_WORKER_TOKEN`, Groq chat model).
+
+Not verified here: the image build (Docker Desktop daemon was stopped on this
+machine — `docker build --check` could not connect). `docker compose config`
+validated the compose file.
+
+> ⚠️ **Rotate secrets.** Running `docker compose config` printed the full `.env`
+> into a session transcript (Supabase service-role + anon keys, JWT secret, DB
+> password, Groq/Cohere/Gemini/Fireworks/HF keys, Google OAuth secret + refresh
+> token). Treat all as compromised and rotate.
+
+---
+
 ## How to run / verify
 
 ```powershell

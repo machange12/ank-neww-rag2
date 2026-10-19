@@ -5,3 +5,9 @@ __pycache__/
 *.pyo
 frontend/node_modules/
 *.log
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*

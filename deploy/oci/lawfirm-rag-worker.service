@@ -1,0 +1,42 @@
+# systemd unit — ingest worker.
+#
+# Runs the endpoints that live ONLY in ingest/worker.py, plus the nightly
+# orphan-cleanup job:
+#   * POST /drive/webhook   (Drive push notifications)
+#   * POST /ingest/manual   (operator-triggered folder re-ingest; needs
+#                            INGEST_WORKER_TOKEN)
+#   * nightly cleanup @ 02:00 UTC (cleanup/orphan_finder.run_cleanup)
+#
+# The main app (lawfirm-rag.service) and this worker schedule DIFFERENT jobs, so
+# running both is intended and causes NO duplicate work:
+#   * app     -> Drive folder poll every 6h (app.py -> ingest/scheduler.py)
+#   * worker  -> nightly orphan cleanup @ 02:00 (ingest/worker.py)
+# Run this unit in addition to the app; without it, nightly cleanup never runs.
+#
+# Install to /etc/systemd/system/lawfirm-rag-worker.service, then:
+#   sudo systemctl daemon-reload && sudo systemctl enable --now lawfirm-rag-worker
+[Unit]
+Description=Law Firm RAG — ingest worker (Drive webhook / manual re-ingest / cleanup)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=lawfirm
+Group=lawfirm
+WorkingDirectory=/opt/lawfirm-rag/lawfirm-rag
+EnvironmentFile=/opt/lawfirm-rag/.env
+
+ExecStart=/opt/lawfirm-rag/.venv/bin/uvicorn ingest.worker:app --host 127.0.0.1 --port 8001 --workers 1
+
+Restart=always
+RestartSec=3
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ProtectKernelTunables=true
+
+[Install]
+WantedBy=multi-user.target

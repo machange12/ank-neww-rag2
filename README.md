@@ -417,28 +417,47 @@ Pure-logic packages (no DB): `authz/`, `citations/`, `corpus/legal_evidence/`,
 ## Repo layout
 
 ```
-lawfirm-rag/            FastAPI backend, packages, tests, migrations, scripts
+lawfirm-rag/            FastAPI backend, packages, tests, migrations, scripts, Dockerfile
 frontend/               React + Vite dashboard (builds to lawfirm-rag/static)
+deploy/oci/             Oracle Cloud deploy: systemd units + nginx config
 docs/                   architecture, decisions (ADRs), operations, security
+docker-compose.yml      container deploy (see docs/operations/oci-deployment.md)
 .env / .env.example     configuration (do not commit .env)
 ```
 
 ## Quick start
 
+The venv lives at the **repo root** (not inside `lawfirm-rag/`), because
+`config.py` resolves `.env` relative to it. The app is cross-platform — see
+[`docs/operations/macos-setup.md`](docs/operations/macos-setup.md) for a
+macOS-specific walkthrough (Apple Silicon and Intel).
+
 ```bash
 cp .env.example .env              # fill keys (Supabase, OpenAI/Groq, Drive OAuth)
-cd lawfirm-rag
+
+# Windows (PowerShell)
 python -m venv .venv
-.venv\Scripts\activate            # Windows
-pip install -r requirements.txt
+.venv\Scripts\activate
+pip install -r lawfirm-rag/requirements.txt
+
+# macOS / Linux
+# python3.11 -m venv .venv
+# source .venv/bin/activate
+# pip install -r lawfirm-rag/requirements.txt
+
+cd lawfirm-rag
 uvicorn app:app --host 0.0.0.0 --port 8000            # chat + API
 uvicorn ingest.worker:app --host 0.0.0.0 --port 8001  # Drive webhook + scheduler
 
 cd ../frontend
-npm install
+npm ci
 npm run dev                       # dev UI on 5173
 npm run build                     # production build -> lawfirm-rag/static
 ```
+
+On macOS/Linux you can also use the repo-root `Makefile`: `make setup`,
+`make api`, `make worker`, `make web`, `make build`, `make test`,
+`make verify`.
 
 Full setup (Supabase schema, Google Drive OAuth, users, access levels) is in
 [`lawfirm-rag/SETUP.md`](lawfirm-rag/SETUP.md).
@@ -447,9 +466,10 @@ Full setup (Supabase schema, Google Drive OAuth, users, access levels) is in
 
 ```bash
 cd lawfirm-rag
-.venv\Scripts\python -m pytest tests/ -q                # 157 offline tests
-.venv\Scripts\python scripts/verify_schema.py --manifest-only
-.venv\Scripts\python tests/integration_test.py           # live backend checks
+../.venv/Scripts/python -m pytest tests/ -q                # 157 offline tests (Windows)
+# ../.venv/bin/python -m pytest tests/ -q                  # macOS / Linux
+../.venv/Scripts/python scripts/verify_schema.py --manifest-only
+../.venv/Scripts/python tests/integration_test.py           # live backend checks
 ```
 
 The integration script exercises a running backend on `http://localhost:8001`
@@ -539,6 +559,7 @@ applying and roll back by restoring the backup — see
 
 ## Further reading
 
+- [`docs/operations/oci-deployment.md`](docs/operations/oci-deployment.md) — deploy on Oracle Cloud (Docker or systemd + nginx)
 - [`docs/architecture/foundation-integrity.md`](docs/architecture/foundation-integrity.md)
 - [`docs/architecture/legal-evidence-model.md`](docs/architecture/legal-evidence-model.md)
 - [`docs/security/threat-model.md`](docs/security/threat-model.md)

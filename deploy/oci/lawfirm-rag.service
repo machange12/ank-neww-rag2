@@ -1,0 +1,47 @@
+# systemd unit — bare-VM deployment on Oracle Linux / Ubuntu (OCI).
+#
+# Install to /etc/systemd/system/lawfirm-rag.service, then:
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now lawfirm-rag
+#   sudo systemctl status lawfirm-rag
+#
+# Assumes:
+#   * code checked out at   /opt/lawfirm-rag        (repo root)
+#   * venv at               /opt/lawfirm-rag/.venv  (repo-root .venv)
+#   * secrets at            /opt/lawfirm-rag/.env   (repo root, chmod 600)
+#   * frontend built        (cd frontend && npm run build  -> lawfirm-rag/static)
+#
+# config.py resolves ROOT_DIR to the PARENT of lawfirm-rag/, i.e. the repo
+# root — which is why EnvironmentFile points at /opt/lawfirm-rag/.env and
+# WorkingDirectory is the lawfirm-rag/ subdirectory.
+[Unit]
+Description=Law Firm RAG — FastAPI app + static frontend
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=lawfirm
+Group=lawfirm
+WorkingDirectory=/opt/lawfirm-rag/lawfirm-rag
+EnvironmentFile=/opt/lawfirm-rag/.env
+
+# Single worker on purpose: the app starts an in-process APScheduler Drive poll
+# (app.py startup). More workers => more Drive polls. Add workers only after
+# moving the scheduler into the worker process.
+ExecStart=/opt/lawfirm-rag/.venv/bin/uvicorn app:app --host 127.0.0.1 --port 8000 --workers 1
+
+Restart=always
+RestartSec=3
+# Long-running SSE streams and LLM calls.
+TimeoutStopSec=30
+
+# Hardening (the app needs no privileged access).
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ProtectKernelTunables=true
+
+[Install]
+WantedBy=multi-user.target

@@ -36,9 +36,11 @@ and additive, a partial forward state is safe to complete.
 
 ```bash
 cd lawfirm-rag
-.venv\Scripts\python scripts/verify_schema.py --manifest-only   # offline
-.venv\Scripts\python scripts/verify_schema.py                   # live DB
-.venv\Scripts\python -m pytest tests/ -q                        # offline suite
+../.venv\Scripts\python scripts/verify_schema.py --manifest-only   # offline (Windows)
+../.venv\Scripts\python scripts/verify_schema.py                   # live DB (Windows)
+../.venv\Scripts\python -m pytest tests/ -q                        # offline suite (Windows)
+# macOS / Linux: replace ../.venv\Scripts\python with ../.venv/bin/python,
+# or use the repo-root Makefile targets `make verify` / `make test`.
 ```
 
 ## Guardrails

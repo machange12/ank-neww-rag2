@@ -9,13 +9,17 @@ inside this directory; it deliberately doesn't duplicate that content.
 ## Run from this directory
 
 ```bash
-python -m venv ../.venv          # or reuse the repo-root .venv
-../.venv/Scripts/activate        # Windows
+python -m venv ../.venv            # or reuse the repo-root .venv
+../.venv/Scripts/activate          # Windows
+# source ../.venv/bin/activate     # macOS / Linux
 pip install -r requirements.txt
 
 uvicorn app:app --host 0.0.0.0 --port 8000            # chat + API
 uvicorn ingest.worker:app --host 0.0.0.0 --port 8001  # Drive webhook + scheduler
 ```
+
+macOS setup (Apple Silicon and Intel, hosted embedder, troubleshooting) is in
+[`../docs/operations/macos-setup.md`](../docs/operations/macos-setup.md).
 
 Environment variables are read from `../.env` (see `../.env.example`). Full
 setup — Supabase schema, Google Drive OAuth, users, access levels — is in
@@ -30,6 +34,9 @@ setup — Supabase schema, Google Drive OAuth, users, access levels — is in
     ingest sessions agents search matters routers corpus citations scripts
 ../.venv/Scripts/python tests/integration_test.py   # needs a running backend + live Supabase
 ```
+
+On macOS/Linux use `../.venv/bin/python` in place of `../.venv/Scripts/python`
+(and the repo-root `Makefile` targets `test` / `verify`).
 
 ## Layout
 

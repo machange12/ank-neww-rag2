@@ -1,0 +1,33 @@
+# Docker Compose deployment for Oracle Cloud Infrastructure (OCI).
+#
+#   docker compose up -d --build
+#
+# The app serves both the API and the built frontend on :8000. nginx (on the
+# host) terminates TLS and proxies to 127.0.0.1:8000 — see
+# deploy/oci/nginx-lawfirm-rag.conf and docs/operations/oci-deployment.md.
+#
+# Secrets come from the repo-root .env (created from .env.example) and are
+# passed as environment variables, not baked into the image.
+services:
+  app:
+    build:
+      context: .
+      dockerfile: lawfirm-rag/Dockerfile
+    image: lawfirm-rag:latest
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      ENVIRONMENT: production
+      PORT: "8000"
+      # The image has no torch — make sure a hosted embedder is configured in
+      # .env (OPENAI_API_KEY or REMOTE_EMBED_URL/REMOTE_EMBED_KEY/REMOTE_EMBED_MODEL).
+    ports:
+      # Bind to loopback only: nginx is the public entrypoint.
+      - "127.0.0.1:8000:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s

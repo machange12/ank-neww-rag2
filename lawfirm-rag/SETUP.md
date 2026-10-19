@@ -85,6 +85,12 @@ streamlit run streamlit_app.py
 The API is then available at `http://localhost:8000` (docs at
 `http://localhost:8000/docs`).
 
+On macOS, see
+[`../docs/operations/macos-setup.md`](../docs/operations/macos-setup.md) for
+the venv layout, Apple Silicon / Intel notes, the hosted embedder requirement
+and troubleshooting. The repo-root `Makefile` provides `make setup`, `make api`,
+`make test` and friends.
+
 ---
 
 ## 6. First ingest
