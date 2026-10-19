@@ -92,13 +92,15 @@ async def create_draft(
             "content": "",
             "sources": [],
             "status": "empty",
+            # Persisted (migration 00015) so the skeleton's drafting hint and
+            # required flag survive a reload — not just the create response.
+            "guidance": str(section.get("guidance") or ""),
+            "required": bool(section.get("required", True)),
         }
         sres = user_client.table("draft_sections").insert(srow).execute()
         saved = _first(response_data(sres))
         if saved:
             sections.append(saved)
-            saved.setdefault("required", bool(section.get("required", True)))
-            saved.setdefault("guidance", str(section.get("guidance") or ""))
 
     draft["sections"] = sections
     # Baseline snapshot (v1) so every draft has a restorable starting point.

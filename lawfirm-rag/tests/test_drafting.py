@@ -9,10 +9,13 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+import pytest
 from conftest import FakeClient
+from fastapi import HTTPException
 
 from agents import draft_agent
 from drafting import store
+from routers import draft as draft_router
 
 
 def _run(coro):
@@ -36,6 +39,17 @@ class _FakeRetriever:
 
     async def ainvoke(self, query: str):
         return self._docs
+
+
+class _BoomLLM:
+    """Fails the test if any LLM path is reached."""
+
+    async def ainvoke(self, messages: Any):
+        raise AssertionError("LLM must not be called")
+
+    async def astream(self, messages: Any):
+        raise AssertionError("LLM must not be called")
+        yield  # pragma: no cover
 
 
 def _doc(content: str, file_id: str = "f1", title: str = "Precedent") -> Any:
@@ -152,6 +166,90 @@ def test_finish_section_no_source_marker_empties_sources():
     assert result["sources"] == []
 
 
+# ---------------------------------------------------------------- refine
+
+def test_refine_grounded_section_keeps_sources():
+    sources = [{"n": 1, "key": "f1", "title": "Precedent"}]
+    section = {
+        "heading": "Term",
+        "content": "The term is five years [1].",
+        "sources": sources,
+        "status": "generated",
+    }
+    out = _run(draft_agent.refine_section(
+        section, "tighten the language", FakeClient(), _FakeLLM("The term is 5 years [1].")
+    ))
+    assert out["status"] == "edited"
+    assert "[1]" in out["content"]
+    assert out["sources"] == sources
+
+
+def test_refine_refuses_ungrounded_section_without_calling_llm():
+    # The no-source guard must cover refine too: a needs_source section carries
+    # a non-empty notice, so only an explicit guard stops the LLM being asked to
+    # fill a gap (ADR-0006: "the LLM is never asked to fill that gap").
+    section = {
+        "heading": "Governing Law",
+        "clause_type": "governing_law",
+        "content": draft_agent.NO_SOURCE_SECTION,
+        "sources": [],
+        "status": "needs_source",
+    }
+    with pytest.raises(ValueError):
+        _run(draft_agent.refine_section(section, "tighten", FakeClient(), _BoomLLM()))
+
+
+def _patch_auth(monkeypatch, user_id, client):
+    monkeypatch.setattr(
+        draft_router, "_auth", lambda token: ({"user_id": user_id, "email": "u@x"}, client)
+    )
+
+
+def test_refine_endpoint_422_on_needs_source_section(monkeypatch):
+    client = FakeClient(auth_uid="user-1")
+    draft = _run(store.create_draft(
+        client,
+        user_id="user-1",
+        tenant_id="t1",
+        title="D",
+        doc_type="nda",
+        skeleton=[{"heading": "Governing Law", "clause_type": "governing_law"}],
+    ))
+    _run(store.update_section(
+        client, draft["id"], 0,
+        content=draft_agent.NO_SOURCE_SECTION, sources=[], status="needs_source",
+    ))
+    _patch_auth(monkeypatch, "user-1", client)
+    monkeypatch.setattr(draft_router, "make_chat_llm", lambda streaming=False: _BoomLLM())
+
+    with pytest.raises(HTTPException) as exc:
+        _run(draft_router.refine_section_endpoint(
+            draft["id"], 0, draft_router.RefineBody(instruction="tighten"), None
+        ))
+    assert exc.value.status_code == 422
+
+
+def test_check_endpoint_404_for_unknown_playbook(monkeypatch):
+    client = FakeClient(auth_uid="user-1")
+    draft = _run(store.create_draft(
+        client,
+        user_id="user-1",
+        tenant_id="t1",
+        title="D",
+        doc_type="nda",
+        skeleton=[{"heading": "Parties", "clause_type": "parties"}],
+    ))
+    _patch_auth(monkeypatch, "user-1", client)
+
+    # An explicit playbook_id that is not available to the caller is a 404, not
+    # a misleading "no playbook applies to this document type" 200.
+    with pytest.raises(HTTPException) as exc:
+        _run(draft_router.check_draft_endpoint(
+            draft["id"], draft_router.CheckBody(playbook_id="pb-missing"), None
+        ))
+    assert exc.value.status_code == 404
+
+
 # ---------------------------------------------------------------- store
 
 def test_create_and_get_draft_round_trip():
@@ -174,6 +272,29 @@ def test_create_and_get_draft_round_trip():
     # A baseline v1 snapshot is written on create.
     assert [v["version"] for v in fetched["versions"]] == [1]
     assert fetched["current_version"] == 1
+
+
+def test_section_guidance_and_required_persist_through_reload():
+    # Migration 00015: the skeleton's guidance hint and required flag used to be
+    # attached only to the create response, so they vanished on reload.
+    client = FakeClient(auth_uid="user-1")
+    draft = _run(store.create_draft(
+        client,
+        user_id="user-1",
+        tenant_id="t1",
+        title="Hints",
+        doc_type="nda",
+        skeleton=[
+            {"heading": "Parties", "clause_type": "parties", "guidance": "Name the parties.", "required": True},
+            {"heading": "Permitted Disclosures", "clause_type": "permitted_disclosure", "guidance": "Carve-outs.", "required": False},
+        ],
+    ))
+    fetched = _run(store.get_draft(client, draft["id"]))
+    by_index = {s["order_index"]: s for s in fetched["sections"]}
+    assert by_index[0]["guidance"] == "Name the parties."
+    assert by_index[0]["required"] is True
+    assert by_index[1]["guidance"] == "Carve-outs."
+    assert by_index[1]["required"] is False
 
 
 def test_draft_is_owner_scoped():

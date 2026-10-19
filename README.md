@@ -111,8 +111,8 @@ and the legal-evidence/citation tooling is typed, deterministic and conservative
 
 ### Ops & tooling
 
-- Versioned SQL migrations (`supabase/migrations/` `0000`–`00014`), single source of truth; legacy `sql/*` frozen as deprecated reference.
-- Offline pytest suite (157 tests) covering authz policy, upload acceptance, citations, legal evidence, drafting, draft sharing, playbooks, export, library seeding, schema manifest, service-role isolation, session ownership.
+- Versioned SQL migrations (`supabase/migrations/` `0000`–`00015`), single source of truth; legacy `sql/*` frozen as deprecated reference.
+- Offline pytest suite (162 tests) covering authz policy, upload acceptance, citations, legal evidence, drafting, draft sharing, playbooks, export, library seeding, schema manifest, service-role isolation, session ownership.
 - Schema manifest verifier (`scripts/verify_schema.py`), migration runner (`scripts/apply_migrations.py`), chat/ingest smoke tests, OAuth token helper.
 - Retrieval-quality eval harnesses: `scripts/eval_retrieval.py` (golden-set hit-rate / zero-result-rate against a running backend), `scripts/eval_golden.py` (synthetic-doc accuracy) and `scripts/eval_drafting.py` (Draft Studio groundedness / citation validity / needs-source correctness).
 - Streamlit test UI (`streamlit_app.py`) with login/chat/upload/admin tabs.
@@ -156,10 +156,11 @@ and the legal-evidence/citation tooling is typed, deterministic and conservative
 
 The following were identified as weaknesses and have since been resolved:
 
-- **Live database migrated through `0000`–`00014` and verified.** Migrations
+- **Live database migrated through `0000`–`00015` and verified.** Migrations
   `00010`–`00014` were pending on the live project (the Draft Studio schema was
   therefore not live); they were applied via `scripts/apply_migrations.py` and
-  the drafting library seeded (`scripts/seed_drafting_library.py`). A live
+  the drafting library seeded (`scripts/seed_drafting_library.py`). `00015`
+  (draft-section `guidance`/`required`) was applied later the same way. A live
   `verify_schema.py` run then surfaced a stale-manifest drift — the verifier
   still required `documents_embedding_idx`, which migrations `00010`/`00011`
   intentionally **replaced** with an HNSW index (`documents_embedding_hnsw`).
@@ -391,12 +392,12 @@ FastAPI app (app.py)  +  ingest worker (ingest/worker.py)
    Supabase PostgREST        ingest/worker paths
         │                       │
         ▼                       ▼
-    Postgres + RLS + migrations 0000..00014
+    Postgres + RLS + migrations 0000..00015
         ├─ chat_sessions / chat_memory        (ownership RLS: user_id_uuid)
         ├─ user_profiles / matter_access      (authorization facts)
         ├─ documents / document_metadata      (retrieval, matter + level RLS)
         ├─ legal_* corpus tables              (legal evidence, migration 0002)
-        ├─ draft_* / playbook_* tables        (grounded drafting, migrations 00012–00014)
+        ├─ draft_* / playbook_* tables        (grounded drafting, migrations 00012–00015)
         └─ audit_security_events              (append-only)
 ```
 
@@ -412,7 +413,7 @@ Pure-logic packages (no DB): `authz/`, `citations/`, `corpus/legal_evidence/`,
 - **Storage:** Supabase (Postgres + pgvector, PostgREST + RLS), Google Drive API.
 - **Frontend:** React 19, Vite, Tailwind CSS, lucide-react (no router, no state
   library, no TypeScript).
-- **Tests:** pytest (157 offline tests); `requests`-based integration script.
+- **Tests:** pytest (162 offline tests); `requests`-based integration script.
 
 ## Repo layout
 
@@ -466,7 +467,7 @@ Full setup (Supabase schema, Google Drive OAuth, users, access levels) is in
 
 ```bash
 cd lawfirm-rag
-../.venv/Scripts/python -m pytest tests/ -q                # 157 offline tests (Windows)
+../.venv/Scripts/python -m pytest tests/ -q                # 162 offline tests (Windows)
 # ../.venv/bin/python -m pytest tests/ -q                  # macOS / Linux
 ../.venv/Scripts/python scripts/verify_schema.py --manifest-only
 ../.venv/Scripts/python tests/integration_test.py           # live backend checks
@@ -533,10 +534,11 @@ applying and roll back by restoring the backup — see
 | `20261013000012_drafting.sql` | Draft Studio schema: `draft_templates`, `draft_clauses` (vector + keyword hybrid), `drafts`, `draft_sections`, `draft_versions`, `playbooks`, `playbook_rules`; owner-only RLS for drafts and SECURITY INVOKER `match_draft_clauses` / `hybrid_search_clauses` (returns `similarity` for the relevance floor). |
 | `20261013000013_draft_checks.sql` | `draft_checks` table (playbook-check history) with parent-inherited owner RLS. |
 | `20261013000014_draft_sharing.sql` | Matter-scoped draft sharing: `drafts.visibility` (`private`/`matter`) + index; replaces `drafts_select_own` with owner **or** matter-shared read, and adds parent-inherited SELECT policies for `draft_sections`/`draft_versions`/`draft_checks`. All write policies stay owner-only. |
+| `20261013000015_draft_section_metadata.sql` | Persists `draft_sections.guidance` + `draft_sections.required` (additive, idempotent) so the skeleton's drafting hint and required flag survive a reload instead of existing only on the create response. |
 
 ## Deployment / operations checklist
 
-- Apply migrations `0`–`00014` and back up before applying (see the table above and
+- Apply migrations `0`–`00015` and back up before applying (see the table above and
   [`docs/operations/migrations-and-rollbacks.md`](docs/operations/migrations-and-rollbacks.md)).
 - Set `CORS_ORIGINS` to an explicit allow-list in production (wildcard is rejected).
 - Set `SUPABASE_JWT_SECRET` in production — without it, the app/worker refuse

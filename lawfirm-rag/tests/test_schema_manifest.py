@@ -46,6 +46,8 @@ def test_required_ddl_present_in_sql():
         r"create table if not exists public\.playbook_rules",
         r"create table if not exists public\.draft_checks",
         r"add column if not exists visibility",
+        r"add column if not exists guidance",
+        r"add column if not exists required",
         r"create policy \"draft_sections_select_shared\"",
         r"create policy \"draft_versions_select_shared\"",
         r"create policy \"draft_checks_select_shared\"",

@@ -61,6 +61,7 @@ REQUIRED_MIGRATIONS = [
     "20261013000012",
     "20261013000013",
     "20261013000014",
+    "20261013000015",
 ]
 
 TABLES: list[TableCheck] = [
@@ -96,7 +97,7 @@ TABLES: list[TableCheck] = [
                policies=["draft_clauses_select_authorized"]),
     TableCheck("drafts", ["user_id_uuid", "tenant_id", "matter_id", "title", "doc_type", "template_id", "status", "current_version", "visibility"], rls_enabled=True,
                policies=["drafts_select_own", "drafts_insert_own"]),
-    TableCheck("draft_sections", ["draft_id", "order_index", "heading", "content", "sources", "status"], rls_enabled=True,
+    TableCheck("draft_sections", ["draft_id", "order_index", "heading", "content", "sources", "status", "guidance", "required"], rls_enabled=True,
                policies=["draft_sections_select_own", "draft_sections_select_shared"]),
     TableCheck("draft_versions", ["draft_id", "version", "snapshot"], rls_enabled=True,
                policies=["draft_versions_select_own", "draft_versions_select_shared"]),

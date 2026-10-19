@@ -5,8 +5,8 @@ RAG. Reference products: Harvey (Assistant → Vault → in-Word editing) and Le
 (Editor → playbook checks → deliver in Word).
 
 **Branch state:** work is uncommitted on top of `b1a43e2e`. Next migration slot
-`20261013000015`, next ADR `0007`. Live DB is now migrated through
-`20261013000014` (was stuck at `0000`–`0009`) and the drafting library is seeded.
+`20261013000016`, next ADR `0007`. Live DB is now migrated through
+`20261013000015` (was stuck at `0000`–`0009`) and the drafting library is seeded.
 
 **Safety model (non-negotiable):** every section is grounded in the authorized
 corpus + curated clause bank. If nothing supports a section, it is persisted as
@@ -46,7 +46,7 @@ Language parity: English **and** Swahili (house non-negotiable).
 | 8. Eval golden set + README/docs sync | ✅ Done |
 | 9. Matter-scoped draft sharing (read-only, opt-in) | ✅ Done |
 
-Test suite: **157 passing** (`python -m pytest tests/ -q`). Offline, no network.
+Test suite: **162 passing** (`python -m pytest tests/ -q`). Offline, no network.
 
 ---
 
@@ -315,6 +315,53 @@ owner-only (RLS + a router guard that returns 403).
 - Verify: `pytest tests/test_draft_sharing.py -q` → 9 passing;
   `pytest tests/ -q` → **157 passing**; `verify_schema.py --manifest-only` →
   `SCHEMA OK`; `npm run build` → clean (1790 modules → `lawfirm-rag/static/`).
+
+---
+
+## Cross-evaluation pass (2026-10-19)
+
+Independently re-checked the nine phases against the code. Verified: `pytest
+tests/ -q` → **162 passing**; `verify_schema.py --manifest-only` → `SCHEMA OK`;
+`npm run build` clean. Four real defects found and fixed.
+
+1. **🔴 Safety hole — refine bypassed the no-source guard.** `refine_section()`
+   only rejected an *empty* section, but a `needs_source` section's content is
+   the non-empty fixed notice, so the router accepted a refine and handed the
+   notice to the LLM — exactly the "LLM fills the gap" path ADR-0006 rules out.
+   Reproduced with a booby-trapped LLM (called ⇒ fail) before fixing.
+   - `agents/draft_agent.py::refine_section` now refuses when
+     `status == 'needs_source'` **or** the content is the no-source notice, and
+     raises `ValueError` **before** the LLM call (router maps it to **422**).
+   - `DraftPanel.jsx` disables the Refine control on a `needs_source` section
+     with an explanatory tooltip.
+   - Tests: `test_refine_refuses_ungrounded_section_without_calling_llm`,
+     `test_refine_endpoint_422_on_needs_source_section`,
+     `test_refine_grounded_section_keeps_sources`.
+2. **🟠 Misleading response — explicit playbook id that is unknown/inaccessible.**
+   `POST /drafts/{id}/check` with a `playbook_id` matched nothing and returned a
+   `200 "No playbook applies to this document type."` Now a **404**
+   (`test_check_endpoint_404_for_unknown_playbook`); the 200 message is kept only
+   for genuine doc-type auto-selection with no applicable playbook.
+3. **📄 Docs drift — ADR-0006 was stale.** Decision 6 still said matter sharing
+   was "deliberately not enabled", but Phase 9 shipped it. Rewritten to describe
+   the explicit, read-only, matter-scoped model (`20261013000014`); decision 3
+   now states the guard covers refine too; consequences updated (eight tables,
+   `draft_checks`/sharing migrations).
+4. **✅ Fixed — `guidance`/`required` are now persisted.** `draft_sections` had
+   no such columns, so they were attached in-memory on create but disappeared
+   on reload: reopening a draft lost the per-section guidance hint and the
+   "required" tag showed on every section.
+   - **`migration 20261013000015`** adds `guidance text not null default ''` and
+     `required boolean not null default true` (additive + idempotent).
+   - `drafting/store.py::create_draft` writes both on insert (the old
+     `setdefault`-after-insert hack is gone); `get_draft` returns them via
+     `select("*")`.
+   - `scripts/verify_schema.py` (migration + both columns) and
+     `tests/test_schema_manifest.py` updated; `test_drafting.py` gains
+     `test_section_guidance_and_required_persist_through_reload`.
+   - **Applied to the live DB** (`20261013000015`) and confirmed live:
+     `verify_database` → `SCHEMA OK`; `guidance`/`required` present with the
+     defaults above.
 
 ---
 

@@ -530,6 +530,11 @@ async def check_draft_endpoint(
             (pb for pb in await get_playbooks(user_client) if pb.get("id") == requested_id),
             None,
         )
+        # An explicit request for an unknown/inaccessible playbook is a 404, not
+        # the "nothing applies by doc type" 200 — the caller asked for a
+        # specific playbook and it is not available to them.
+        if playbook is None:
+            raise HTTPException(status_code=404, detail="NOT_FOUND: no such playbook for this user")
     else:
         playbooks = await get_playbooks(user_client, doc_type)
         playbook = playbooks[0] if playbooks else None

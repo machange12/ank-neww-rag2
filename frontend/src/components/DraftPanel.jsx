@@ -149,7 +149,8 @@ function SectionCard({ section, index, orderIndex, isGenerating, streamingText, 
                 onRefine(orderIndex, instruction);
                 setInstruction("");
               }}
-              disabled={isRefining || !instruction.trim() || !hasContent}
+              disabled={isRefining || !instruction.trim() || !hasContent || issues}
+              title={issues ? "This section has no grounding to refine — add a source or draft it manually." : undefined}
               className="flex items-center gap-1.5 rounded-md border border-gray-300 px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {isRefining ? <Loader2 className="animate-spin" size={13} /> : <Wand2 size={13} />}

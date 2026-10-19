@@ -370,6 +370,12 @@ async def refine_section(
     sources = list(section.get("sources") or [])
     if not content.strip():
         raise ValueError("cannot refine an empty section")
+    # The no-source guard must hold on EVERY LLM path, not just generation. A
+    # needs_source section carries the fixed notice, which is non-empty — so
+    # without this check refine would hand that notice to the model and invite
+    # it to invent the very gap-filling text the guard exists to prevent.
+    if section.get("status") == "needs_source" or is_no_source_answer(content):
+        raise ValueError("cannot refine a section with no grounding: add a source or draft it manually")
     prompt = REFINE_SECTION_TEMPLATE.format(
         heading=section.get("heading") or "",
         instruction=instruction or "Improve clarity and precision.",
