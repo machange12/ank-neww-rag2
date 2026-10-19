@@ -43,8 +43,26 @@ def _meta_line(draft: dict[str, Any]) -> str:
 
 def _source_line(source: dict[str, Any]) -> str:
     title = source.get("title") or source.get("file_title") or "Unknown source"
-    detail = source.get("section_heading") or source.get("url") or source.get("file_id") or ""
+    label = source.get("label") or _label_from_fields(source)
+    detail = label or source.get("section_heading") or source.get("url") or source.get("file_id") or ""
     return f"{title} — {detail}" if detail else str(title)
+
+
+def _label_from_fields(source: dict[str, Any]) -> str:
+    """Locator label for sections persisted before the label field existed."""
+    page_start = source.get("page_start")
+    paragraph_start = source.get("paragraph_start")
+    if page_start:
+        page_end = source.get("page_end") or page_start
+        return f"p. {page_start}" if page_end == page_start else f"pp. {page_start}–{page_end}"
+    if paragraph_start:
+        paragraph_end = source.get("paragraph_end") or paragraph_start
+        return (
+            f"¶ {paragraph_start}"
+            if paragraph_end == paragraph_start
+            else f"¶¶ {paragraph_start}–{paragraph_end}"
+        )
+    return ""
 
 
 def _iter_endnotes(draft: dict[str, Any]):

@@ -97,6 +97,11 @@ function SectionCard({ section, index, orderIndex, isGenerating, streamingText, 
               <li key={source.id} className="flex items-center gap-1.5 text-[11px] text-gray-500">
                 <span className="text-gray-400">[{source.n}]</span>
                 <span className="truncate" title={source.title}>{source.title}</span>
+                {source.label && (
+                  <span className="flex-shrink-0 rounded bg-gray-100 px-1 py-[1px] font-medium text-gray-600">
+                    {source.label}
+                  </span>
+                )}
                 {source.meta && <span className="truncate text-gray-300">{source.meta}</span>}
               </li>
             ))}

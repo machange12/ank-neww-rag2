@@ -17,6 +17,10 @@ export function useDocuments({ apiFetch, authHeaders, setError, setNotice }) {
   const [uploadMatterId, setUploadMatterId] = useState("");
   const [uploadAccessLevel, setUploadAccessLevel] = useState("1");
   const [uploadProgress, setUploadProgress] = useState(null); // { done, total } while a batch is running
+  // file_id -> [{ shared_with, email, created_at }] for the caller's own
+  // private uploads. Only the owner can load this (enforced in SQL).
+  const [shares, setShares] = useState({});
+  const [isSharing, setIsSharing] = useState(false);
 
   async function loadDocuments() {
     setIsLoadingDocuments(true);
@@ -186,6 +190,67 @@ export function useDocuments({ apiFetch, authHeaders, setError, setNotice }) {
     }
   }
 
+  async function loadShares(fileId) {
+    try {
+      const response = await apiFetch(
+        `/documents/shares?file_id=${encodeURIComponent(fileId)}`,
+        { headers: authHeaders() }
+      );
+      const data = await parseJsonResponse(response, "Could not load shares");
+      if (!response.ok) throw new Error(data.error || data.detail || "Could not load shares");
+      setShares((prev) => ({ ...prev, [fileId]: data.shares || [] }));
+      return data.shares || [];
+    } catch (err) {
+      if (err.message !== "UNAUTHORIZED") setError(err.message);
+      return null;
+    }
+  }
+
+  async function shareDocument(fileId, email) {
+    setError("");
+    setNotice("");
+    setIsSharing(true);
+    try {
+      const response = await apiFetch("/documents/share", {
+        method: "POST",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ file_id: fileId, email }),
+      });
+      const data = await parseJsonResponse(response, "Could not share document");
+      if (!response.ok) throw new Error(data.error || data.detail || "Could not share document");
+      setNotice(`Shared with ${email}.`);
+      await loadShares(fileId);
+      return true;
+    } catch (err) {
+      if (err.message !== "UNAUTHORIZED") setError(err.message);
+      return false;
+    } finally {
+      setIsSharing(false);
+    }
+  }
+
+  async function unshareDocument(fileId, sharedWith) {
+    setError("");
+    setNotice("");
+    setIsSharing(true);
+    try {
+      const response = await apiFetch(
+        `/documents/share?file_id=${encodeURIComponent(fileId)}&shared_with=${encodeURIComponent(sharedWith)}`,
+        { method: "DELETE", headers: authHeaders() }
+      );
+      const data = await parseJsonResponse(response, "Could not revoke share");
+      if (!response.ok) throw new Error(data.error || data.detail || "Could not revoke share");
+      setNotice("Share revoked.");
+      await loadShares(fileId);
+      return true;
+    } catch (err) {
+      if (err.message !== "UNAUTHORIZED") setError(err.message);
+      return false;
+    } finally {
+      setIsSharing(false);
+    }
+  }
+
   return {
     documents,
     driveFiles,
@@ -206,5 +271,10 @@ export function useDocuments({ apiFetch, authHeaders, setError, setNotice }) {
     loadDriveFiles,
     ingestDriveFile,
     ingestDriveFolder,
+    shares,
+    isSharing,
+    loadShares,
+    shareDocument,
+    unshareDocument,
   };
 }

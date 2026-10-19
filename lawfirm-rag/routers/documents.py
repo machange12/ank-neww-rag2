@@ -169,6 +169,11 @@ async def upload_document(
 
         safe_filename = file.filename or "uploaded_document"
         file_id = f"upload_{ctx['user_id']}_{safe_filename}"
+        # PRIVATE: an upload belongs to the account that uploaded it and is
+        # visible to nobody else unless the owner explicitly shares it
+        # (migration 20261013000016). The service-role write bypasses RLS, so
+        # ownership must be stamped here — there is no way for a policy to
+        # infer it after the fact.
         result = await upsert_file(
             file_id=file_id,
             file_title=safe_filename,
@@ -177,6 +182,8 @@ async def upload_document(
             raw_bytes=contents,
             access_level=decision.access_level,
             matter_id=decision.matter_id,
+            owner_user_id=ctx["user_id"],
+            doc_scope="private",
         )
         return JSONResponse({
             "status": "ok",
@@ -224,7 +231,42 @@ async def document_view(
         raise HTTPException(status_code=404, detail="Document not found")
     rows.sort(key=lambda r: (r.get("metadata") or {}).get("chunk_index", 0))
     title = (rows[0].get("metadata") or {}).get("file_title") or file_id
-    return PlainTextResponse(title + "\n\n" + "\n\n".join(r["content"] for r in rows))
+
+    # Prefix each new page/paragraph locator with a marker line so a reader
+    # following a citation ("p. 12", "¶ 4") can find the passage. Markers are
+    # the *chunk's* locator, not a true page break: a chunk may span a page
+    # boundary, in which case its label is a range.
+    parts: list[str] = []
+    last_label = ""
+    for row in rows:
+        meta = row.get("metadata") or {}
+        label = _chunk_locator_label(meta)
+        if label and label != last_label:
+            parts.append(f"===== {label} =====")
+            last_label = label
+        parts.append(row["content"])
+    return PlainTextResponse(title + "\n\n" + "\n\n".join(parts))
+
+
+def _chunk_locator_label(meta: dict[str, Any]) -> str:
+    """``p. 12`` / ``pp. 12–13`` / ``¶ 4`` for a chunk, or "" when unknown.
+
+    Mirrors agents.rag_agent._locator_label; duplicated here to keep the
+    documents router free of an import cycle through the agent layer.
+    """
+    page_start = meta.get("page_start") or meta.get("page_number") or None
+    page_end = meta.get("page_end") or page_start
+    paragraph_start = meta.get("paragraph_start") or None
+    paragraph_end = meta.get("paragraph_end") or paragraph_start
+    if page_start:
+        return f"p. {page_start}" if page_end == page_start else f"pp. {page_start}–{page_end}"
+    if paragraph_start:
+        return (
+            f"¶ {paragraph_start}"
+            if paragraph_end == paragraph_start
+            else f"¶¶ {paragraph_start}–{paragraph_end}"
+        )
+    return ""
 
 
 @router.get("/documents/intelligence")
@@ -341,3 +383,102 @@ async def ingest_drive_file(
         )
     except DriveAuthError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+# ---------------------------------------------------------------------------
+# Per-account privacy: explicit sharing of one's own uploads
+# ---------------------------------------------------------------------------
+
+class DocumentShareBody(BaseModel):
+    file_id: str
+    email: str
+
+
+def _share_rpc_error(exc: Exception, default: str) -> HTTPException:
+    """Map a Postgres exception raised by the share RPCs onto an HTTP status.
+
+    The RPCs raise with a leading marker ('forbidden:' / 'not_found:' /
+    'invalid:') precisely so the message stays useful to the user without
+    leaking why a lookup failed.
+    """
+    text = ""
+    for attr in ("message", "details"):
+        value = getattr(exc, attr, None)
+        if isinstance(value, str) and value:
+            text = value
+            break
+    if not text:
+        text = str(exc)
+    lowered = text.lower()
+    if "forbidden" in lowered:
+        return HTTPException(status_code=403, detail=text)
+    if "not_found" in lowered or "no user with email" in lowered:
+        return HTTPException(status_code=404, detail=text)
+    return HTTPException(status_code=400, detail=text or default)
+
+
+@router.get("/documents/shares")
+async def document_shares(
+    file_id: str,
+    authorization: str | None = Header(default=None),
+) -> JSONResponse:
+    """Accounts this file is shared with. Owner-only (enforced in SQL)."""
+    token = token_from_header(authorization)
+    ctx_rbac_from_token(token)
+    try:
+        res = make_user_client(token).rpc(
+            "list_document_shares", {"p_file_id": file_id}
+        ).execute()
+    except Exception as exc:  # noqa: BLE001
+        raise _share_rpc_error(exc, "Could not load shares") from exc
+    return JSONResponse({"shares": res.data or []})
+
+
+@router.post("/documents/share")
+async def share_document(
+    body: DocumentShareBody,
+    authorization: str | None = Header(default=None),
+) -> JSONResponse:
+    """Share one of the caller's own uploads with a colleague, by email.
+
+    PRIVACY: only the owner of a private upload may share it, the recipient
+    must be in the same firm, and the recipient's access level and matter
+    grants must already cover the document — an explicit share can never
+    escalate past the file's own classification. All of that is enforced in
+    public.share_document_by_email (SECURITY DEFINER), so it cannot be bypassed
+    by calling the API differently; this endpoint only translates errors.
+    """
+    token = token_from_header(authorization)
+    ctx_rbac_from_token(token)
+    email = (body.email or "").strip()
+    if not email:
+        raise HTTPException(status_code=400, detail="email is required")
+    try:
+        res = make_user_client(token).rpc(
+            "share_document_by_email",
+            {"p_file_id": body.file_id, "p_email": email},
+        ).execute()
+    except Exception as exc:  # noqa: BLE001
+        raise _share_rpc_error(exc, "Could not share document") from exc
+    shared_with = res.data if isinstance(res.data, str) else (
+        (res.data or [None])[0] if isinstance(res.data, list) else None
+    )
+    return JSONResponse({"status": "ok", "file_id": body.file_id, "shared_with": shared_with, "email": email})
+
+
+@router.delete("/documents/share")
+async def unshare_document(
+    file_id: str,
+    shared_with: str,
+    authorization: str | None = Header(default=None),
+) -> JSONResponse:
+    """Revoke a share on one of the caller's own uploads (owner-only, in SQL)."""
+    token = token_from_header(authorization)
+    ctx_rbac_from_token(token)
+    try:
+        make_user_client(token).rpc(
+            "unshare_document", {"p_file_id": file_id, "p_shared_with": shared_with}
+        ).execute()
+    except Exception as exc:  # noqa: BLE001
+        raise _share_rpc_error(exc, "Could not revoke share") from exc
+    return JSONResponse({"status": "ok", "file_id": file_id, "shared_with": shared_with})

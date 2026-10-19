@@ -34,6 +34,7 @@ CORE BEHAVIOUR RULES:
 6. If you can answer only part of the question, answer that part, then say what is missing and ask a follow-up question about it.
 7. Never speculate beyond the retrieved content.
 8. Write in plain text only — no markdown. Do not use asterisks for bold or italic, dash or bullet lists, or # headings. Use complete sentences and short paragraphs.
+9. A context header may show a page (p. 12 / pp. 12–13) or paragraph (¶ 4) for the passage. You may repeat that location when you cite the passage, but never state, estimate or infer a page or paragraph number that is not shown in the header of the chunk you are citing. The interface displays each citation's exact location from the source list.
 
 RETRIEVED CONTEXT:
 {context}
@@ -322,6 +323,9 @@ def _build_context_string(docs: list[Any], sources: list[dict[str, Any]]) -> str
             header += f" | Matter: {meta['matter_id']}"
         if meta.get("section_heading"):
             header += f" | {meta['section_heading']}"
+        location = _location_from_meta(meta)
+        if location:
+            header += f" | {location['label']}"
         parts.append(f"{header}\n{doc.page_content}")
     return "\n\n---\n\n".join(parts)
 
@@ -481,6 +485,67 @@ def _clarifying_question(query: str, docs: list[Any]) -> str | None:
     return f"Your question could refer to more than one document:\n{listed}\n\nWhich one do you mean?"
 
 
+# Longest verbatim excerpt shown under a source. Long enough to let a reader
+# recognise the passage, short enough that the source list stays scannable.
+_QUOTE_MAX = 320
+
+
+def _locator_label(
+    page_start: int | None,
+    page_end: int | None,
+    paragraph_start: int | None,
+    paragraph_end: int | None,
+) -> str:
+    """Human label for a retrieved span: "p. 12", "pp. 12–13", "¶ 4", "¶¶ 4–6".
+
+    Pages win over paragraphs when a document somehow carries both (a PDF
+    chunk is always page-located). Empty string when the document has no
+    reliable locator — we show nothing rather than a number we cannot stand
+    behind.
+    """
+    if page_start:
+        end = page_end or page_start
+        return f"p. {page_start}" if end == page_start else f"pp. {page_start}–{end}"
+    if paragraph_start:
+        end = paragraph_end or paragraph_start
+        return f"¶ {paragraph_start}" if end == paragraph_start else f"¶¶ {paragraph_start}–{end}"
+    return ""
+
+
+def _location_from_meta(meta: dict[str, Any]) -> dict[str, Any] | None:
+    """Chunk-level locator, or None when the chunk has no real provenance.
+
+    ``page_number`` is the pre-provenance alias; it was 0 for DOCX/TXT and a
+    synthetic guess for PDFs, so 0 is treated as "unknown". Documents ingested
+    before the provenance change therefore report no page until re-ingested
+    (scripts/reingest_provenance.py) — a missing page is honest, a wrong one
+    is not.
+    """
+    page_start = meta.get("page_start") or meta.get("page_number") or None
+    page_end = meta.get("page_end") or page_start
+    paragraph_start = meta.get("paragraph_start") or None
+    paragraph_end = meta.get("paragraph_end") or paragraph_start
+    if not page_start and not paragraph_start:
+        return None
+    return {
+        "chunk_index": meta.get("chunk_index", 0) or 0,
+        "page_start": page_start,
+        "page_end": page_end,
+        "paragraph_start": paragraph_start,
+        "paragraph_end": paragraph_end,
+        "label": _locator_label(page_start, page_end, paragraph_start, paragraph_end),
+    }
+
+
+def _quote_from(text: str) -> str:
+    """Short verbatim excerpt from the retrieved chunk, whitespace-normalised."""
+    cleaned = " ".join((text or "").split())
+    if len(cleaned) <= _QUOTE_MAX:
+        return cleaned
+    cut = cleaned.rfind(" ", 0, _QUOTE_MAX)
+    return cleaned[: cut if cut > 0 else _QUOTE_MAX].rstrip(" ,;:.") + "…"
+
+
 def _sources_from_docs(docs: list[Any]) -> list[dict[str, Any]]:
     """Build source dicts with title/url/file_id plus chunk-level citation fields.
 
@@ -488,28 +553,73 @@ def _sources_from_docs(docs: list[Any]) -> list[dict[str, Any]]:
     required a non-empty ``url`` to include a doc at all, which silently
     hid every uploaded-file source (UI-upload path stores no url, only
     Drive-ingested docs have one) even when the answer cited it.
+
+    A source is listed once per document, but every retrieved chunk of that
+    document contributes a *location* (page range / paragraph range) and the
+    document-level range is the envelope of those, so an answer that leans on
+    two pages of one file still cites [1] once and shows "pp. 12–14".
     """
     sources: list[dict[str, Any]] = []
-    seen: set[str] = set()
+    index: dict[str, int] = {}
     for doc in docs:
         meta = getattr(doc, "metadata", {}) or {}
-        url = meta.get("url") or meta.get("file_url", "")
-        raw_title = meta.get("file_title") or meta.get("title") or "Unknown document"
         key = _doc_key(meta)
-        if not key or key in seen:
+        if not key:
             continue
-        seen.add(key)
-        sources.append({
-            "n": len(sources) + 1,  # the [n] the answer cites
-            "key": key,
-            "title": _pretty_title(raw_title),
-            "file_title": raw_title,
-            "url": url,
-            "file_id": meta.get("file_id", ""),
-            "section_heading": meta.get("section_heading", "") or "",
-            "chunk_index": meta.get("chunk_index", 0) or 0,
-            "page_number": meta.get("page_number", 0) or 0,
-        })
+
+        location = _location_from_meta(meta)
+        if key not in index:
+            raw_title = meta.get("file_title") or meta.get("title") or "Unknown document"
+            index[key] = len(sources)
+            sources.append({
+                "n": len(sources) + 1,  # the [n] the answer cites
+                "key": key,
+                "title": _pretty_title(raw_title),
+                "file_title": raw_title,
+                "url": meta.get("url") or meta.get("file_url", ""),
+                "file_id": meta.get("file_id", ""),
+                "kind": meta.get("kind", "") or "",
+                "section_heading": meta.get("section_heading", "") or "",
+                "chunk_index": meta.get("chunk_index", 0) or 0,
+                "page_number": meta.get("page_start") or 0,
+                "page_start": None,
+                "page_end": None,
+                "paragraph_start": None,
+                "paragraph_end": None,
+                "locator_kind": meta.get("locator_kind", "") or "",
+                "label": "",
+                "quote": _quote_from(getattr(doc, "page_content", "") or ""),
+                "locations": [],
+            })
+
+        entry = sources[index[key]]
+        if location and location not in entry["locations"]:
+            entry["locations"].append(location)
+        if not entry["quote"]:
+            entry["quote"] = _quote_from(getattr(doc, "page_content", "") or "")
+        # First chunk's heading wins; later chunks are continuations.
+        if not entry["section_heading"] and meta.get("section_heading"):
+            entry["section_heading"] = meta["section_heading"]
+
+    for entry in sources:
+        locations = entry["locations"]
+        if not locations:
+            continue
+        entry["page_start"] = min((l["page_start"] for l in locations if l["page_start"]), default=None)
+        entry["page_end"] = max((l["page_end"] for l in locations if l["page_end"]), default=None)
+        entry["paragraph_start"] = min(
+            (l["paragraph_start"] for l in locations if l["paragraph_start"]), default=None
+        )
+        entry["paragraph_end"] = max(
+            (l["paragraph_end"] for l in locations if l["paragraph_end"]), default=None
+        )
+        entry["page_number"] = entry["page_start"] or 0
+        entry["label"] = _locator_label(
+            entry["page_start"],
+            entry["page_end"],
+            entry["paragraph_start"],
+            entry["paragraph_end"],
+        )
     return sources
 
 

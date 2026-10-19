@@ -8,7 +8,7 @@ from typing import Any
 
 from ingest.classifier import classify_document, extract_legal_entities
 from ingest.embed import CHUNKING_VERSION, chunk_text_auto, embed_chunks, total_tokens
-from ingest.extract import extract_text
+from ingest.extract import extract_document
 from postgrest_utils import response_data
 from search.service_client import make_service_client
 
@@ -49,10 +49,13 @@ async def upsert_file(
     access_level: int,
     matter_id: str,
     drive_modified_time: str = "",
+    force: bool = False,
+    owner_user_id: str | None = None,
+    doc_scope: str = "corpus",
 ) -> dict[str, Any]:
     """
     Full ingest pipeline for one file:
-      1. Extract text
+      1. Extract text (+ page/paragraph provenance)
       2. Chunk + embed
       3. Delete old rows for this file_id (idempotent re-ingest)
       4. Insert new document rows
@@ -66,6 +69,23 @@ async def upsert_file(
     could not be enforced for higher-privilege docs). Callers MUST
     compute these values from the requesting user's role or an explicit
     configuration source. There is no safe default.
+
+    SECURITY (ownership): writes go through the service role, which bypasses
+    RLS, so the private/shared boundary (migration 20261013000016) can only be
+    enforced if the caller states it here.
+      * ``doc_scope="corpus"`` (default) — the firm corpus; visible per the
+        access_level + matter rules. Correct for Drive ingest, the polling
+        worker and the Drive webhook.
+      * ``doc_scope="private", owner_user_id=<uuid>`` — one account's upload.
+        Correct ONLY for the authenticated upload endpoint, which passes the
+        caller's own user id.
+    A private row with no owner is rejected (the DB CHECK constraint would
+    reject it too) because it would be invisible to everyone, including its
+    uploader.
+
+    ``force=True`` bypasses the unchanged-content short-circuit. Needed when
+    re-ingesting solely to populate new metadata (e.g. page/paragraph
+    provenance), where the bytes have not changed.
     """
     if access_level < 1:
         raise ValueError(
@@ -73,6 +93,12 @@ async def upsert_file(
         )
     if matter_id is None:
         raise ValueError(f"matter_id must not be None for file_id={file_id}")
+    if doc_scope not in ("corpus", "private"):
+        raise ValueError(f"doc_scope must be 'corpus' or 'private'; got {doc_scope!r}")
+    if doc_scope == "private" and not owner_user_id:
+        raise ValueError(
+            f"doc_scope='private' requires owner_user_id for file_id={file_id}"
+        )
     client = make_service_client()
 
     # Compute content hash to detect unchanged files and avoid re-embedding.
@@ -87,11 +113,12 @@ async def upsert_file(
     except Exception:
         existing_hash = None
 
-    if existing_hash and existing_hash == content_hash:
+    if existing_hash and existing_hash == content_hash and not force:
         logger.info("skipping unchanged file file_id=%s", file_id)
         return {"file_id": file_id, "chunks": 0, "skipped": True}
 
-    text, total_pages = extract_text(raw_bytes, mime_type)
+    extracted = extract_document(raw_bytes, mime_type)
+    text, total_pages = extracted.text, extracted.total_pages
 
     # Document intelligence — classify and extract entities once per file.
     # A classifier failure must NEVER break ingest: fall back to empty metadata.
@@ -125,7 +152,12 @@ async def upsert_file(
         # name, so the doc-intelligence call above raised UnboundLocalError
         # and every upload was stored as doc_type "unknown".
         chunking_llm = make_chat_llm()
-    chunks, chunking_method = chunk_text_auto(text, llm=chunking_llm)
+    chunks, chunking_method = chunk_text_auto(
+        text,
+        llm=chunking_llm,
+        segments=extracted.segments,
+        locator_kind=extracted.locator_kind,
+    )
     if not chunks:
         logger.warning("No chunks produced for file_id=%s", file_id)
         return {"file_id": file_id, "chunks": 0}
@@ -140,7 +172,6 @@ async def upsert_file(
 
     ingested_at = datetime.now(timezone.utc).isoformat()
     total_chunks = len(chunks)
-    chunks_per_page = max(1, total_chunks // max(1, total_pages))
 
     # Insert new document rows (one row per chunk). Include richer metadata per chunk.
     rows = [
@@ -160,7 +191,19 @@ async def upsert_file(
                 "total_chunks": total_chunks,
                 "chunking_version": CHUNKING_VERSION,
                 "chunking_method": chunking_method,
-                "page_number": chunk.chunk_index // chunks_per_page,
+                # Real provenance from ingest.extract (not a chunk-count
+                # guess). Pages are 1-based PDF pages; paragraphs are 1-based
+                # over non-empty paragraphs for DOCX/text. ``page_number`` is
+                # kept as a back-compat alias of page_start.
+                "page_start": chunk.page_start,
+                "page_end": chunk.page_end,
+                "page_number": chunk.page_start,
+                "paragraph_start": chunk.paragraph_start,
+                "paragraph_end": chunk.paragraph_end,
+                "locator_kind": chunk.locator_kind,
+                "char_start": chunk.char_start,
+                "char_end": chunk.char_end,
+                "total_pages": total_pages,
                 "doc_type": doc_intelligence.get("doc_type", "unknown"),
                 "jurisdiction": doc_intelligence.get("jurisdiction", "Unknown"),
                 "doc_language": doc_intelligence.get("language", "English"),
@@ -168,6 +211,8 @@ async def upsert_file(
             },
             "access_level": access_level,
             "matter_id": matter_id,
+            "owner_user_id": owner_user_id,
+            "doc_scope": doc_scope,
         }
         for chunk, embedding in zip(chunks, embeddings)
     ]
@@ -197,6 +242,8 @@ async def upsert_file(
         "drive_modified_time": drive_modified_time,
         "access_level": access_level,
         "matter_id": matter_id,
+        "owner_user_id": owner_user_id,
+        "doc_scope": doc_scope,
         "doc_type": doc_intelligence.get("doc_type", "unknown"),
         "legal_entities": json.dumps(doc_intelligence),
     }, on_conflict="file_id").execute()

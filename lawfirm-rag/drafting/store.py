@@ -23,6 +23,73 @@ def _now() -> str:
 # The single-firm tenant id provisioned by migration 0001.
 DEFAULT_TENANT_ID = "00000000-0000-0000-0000-000000000001"
 
+# Shown in place of an unreadable source's title. A draft keeps its citation
+# numbers when shared, but a source that is another account's private upload
+# must not leak its title, page or quoted text to a reader who cannot open it
+# (see _redact_unreadable_sources).
+RESTRICTED_SOURCE_LABEL = "Restricted source — not shared with you"
+
+_REDACTED_SOURCE_KEYS = (
+    "url",
+    "quote",
+    "label",
+    "section_heading",
+    "page_number",
+    "page_start",
+    "page_end",
+    "paragraph_start",
+    "paragraph_end",
+    "locator_kind",
+    "locations",
+)
+
+
+async def _redact_unreadable_sources(user_client: Any, sections: list[dict[str, Any]]) -> None:
+    """Blank out any source the caller cannot read, in place.
+
+    The visible set is exactly what RLS returns for those file_ids through the
+    caller's own client, so corpus documents, the caller's own uploads and
+    uploads shared *with* the caller all stay intact. Anything else (another
+    account's private upload) keeps only its citation number.
+
+    Fails closed: if the visibility lookup itself errors, every listed file is
+    treated as unreadable.
+    """
+    file_ids = sorted({
+        src.get("file_id")
+        for section in sections
+        for src in (section.get("sources") or [])
+        if isinstance(src, dict) and src.get("file_id")
+    })
+    if not file_ids:
+        return
+
+    try:
+        res = (
+            user_client.table("document_metadata")
+            .select("file_id")
+            .in_("file_id", file_ids)
+            .execute()
+        )
+        visible = {row.get("file_id") for row in (response_data(res) or []) if isinstance(row, dict)}
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("could not resolve visible draft sources (redacting all): %s", exc)
+        visible = set()
+
+    for section in sections:
+        for src in (section.get("sources") or []):
+            if not isinstance(src, dict):
+                continue
+            file_id = src.get("file_id")
+            if not file_id or file_id in visible:
+                continue
+            for key in _REDACTED_SOURCE_KEYS:
+                src.pop(key, None)
+            src["title"] = RESTRICTED_SOURCE_LABEL
+            src["file_title"] = RESTRICTED_SOURCE_LABEL
+            src["restricted"] = True
+            src["file_id"] = ""
+
 
 async def resolve_tenant_id(user_client: Any, user_id: str) -> str:
     """Best-effort tenant id from the caller's OWN user_profiles row.
@@ -163,6 +230,7 @@ async def get_draft(user_client: Any, draft_id: str) -> dict[str, Any] | None:
     )
     sections = response_data(sres)
     draft["sections"] = sorted(sections, key=lambda s: s.get("order_index", 0)) if isinstance(sections, list) else []
+    await _redact_unreadable_sources(user_client, draft["sections"])
 
     vres = (
         user_client.table("draft_versions")
@@ -297,7 +365,14 @@ async def get_version(user_client: Any, draft_id: str, version: int) -> dict[str
         .limit(1)
         .execute()
     )
-    return _first(response_data(res))
+    row = _first(response_data(res))
+    if isinstance(row, dict):
+        # Version snapshots embed the same sources as live sections, so they
+        # need the same per-account redaction (migration 20261013000016).
+        snapshot = row.get("snapshot")
+        if isinstance(snapshot, dict):
+            await _redact_unreadable_sources(user_client, snapshot.get("sections") or [])
+    return row
 
 
 async def restore_version(

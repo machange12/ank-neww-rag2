@@ -82,6 +82,31 @@ class FakeTable:
         self._pending_insert = inserted
         return self
 
+    def upsert(self, rows, on_conflict: str | None = None):
+        """Insert or merge by ``on_conflict`` (mirrors PostgREST's upsert)."""
+        if not isinstance(rows, list):
+            rows = [rows]
+        stored = []
+        for r in rows:
+            row = dict(r)
+            for key, value in self._defaults.items():
+                row.setdefault(key, value)
+            merged = None
+            if on_conflict:
+                for existing in self.rows:
+                    key = row.get(on_conflict)
+                    if key is not None and existing.get(on_conflict) == key:
+                        existing.update(row)
+                        merged = existing
+                        break
+            if merged is None:
+                row.setdefault("id", f"id-{len(self.rows) + 1}")
+                self.rows.append(row)
+                merged = row
+            stored.append(merged)
+        self._pending_insert = stored
+        return self
+
     def delete(self):
         self._op["delete"] = True
         return self

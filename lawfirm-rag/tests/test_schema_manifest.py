@@ -56,6 +56,14 @@ def test_required_ddl_present_in_sql():
         r"create or replace function public\.auth_user_admin",
         r"alter table public\.documents force row level security",
         r"create policy \"auth_uid can select documents\"",
+        # Per-account document privacy (migration 20261013000016).
+        r"create table if not exists public\.document_shares",
+        r"add column if not exists owner_user_id",
+        r"add column if not exists doc_scope",
+        r"create policy \"document_shares_insert_owner\"",
+        r"create or replace function public\.auth_owns_document",
+        r"create or replace function public\.share_document_by_email",
+        r"create or replace function public\.unshare_document",
     ]
     for pattern in required_ddl:
         assert re.search(pattern, sql), f"required DDL missing: {pattern}"

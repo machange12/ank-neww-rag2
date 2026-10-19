@@ -14,10 +14,15 @@ from typing import Any
 
 
 def list_documents(client: Any, limit: int = 100) -> list[dict[str, Any]]:
-    """List indexed documents visible to the caller under RLS."""
+    """List indexed documents visible to the caller under RLS.
+
+    ``doc_scope``/``owner_user_id`` are returned so the UI can mark an upload as
+    private to one account (migration 20261013000016) and offer sharing only for
+    files the caller owns. RLS already decides *which* files appear.
+    """
     result = (
         client.table("document_metadata")
-        .select("file_id, file_title, url, mime_type, ingested_at, access_level, matter_id")
+        .select("file_id, file_title, url, mime_type, ingested_at, access_level, matter_id, doc_scope, owner_user_id")
         .order("ingested_at", desc=True)
         .limit(limit)
         .execute()

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { API_BASE, apiFetch as apiFetchRaw, decodeJwtExpiry, parseJsonResponse } from "../lib/api";
+import { API_BASE, apiFetch as apiFetchRaw, decodeJwtExpiry, decodeJwtSubject, parseJsonResponse } from "../lib/api";
 
 // Login/session/token state, shared apiFetch wrapper. `setStatus`/`setActiveNav`
 // are injected so login/sign-out can drive the page-level status line and nav
@@ -99,6 +99,10 @@ export function useAuth({ setStatus, setActiveNav, setError, setNotice }) {
     password,
     setPassword,
     token,
+    // auth.users.id from the verified JWT — the account id the backend uses as
+    // documents.owner_user_id. Read-only, display purposes only (the backend
+    // enforces ownership itself).
+    userId: decodeJwtSubject(token),
     userLabel,
     accessLevel,
     isLoggingIn,

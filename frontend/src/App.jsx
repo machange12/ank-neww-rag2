@@ -109,6 +109,12 @@ export default function ANKRagDashboard() {
         uploadProgress={documents.uploadProgress}
         uploadMatterId={documents.uploadMatterId}
         isUploading={documents.isUploading}
+        currentUserId={auth.userId}
+        shares={documents.shares}
+        isSharing={documents.isSharing}
+        loadShares={documents.loadShares}
+        shareDocument={documents.shareDocument}
+        unshareDocument={documents.unshareDocument}
       />
     ),
     Drafting: (
@@ -259,9 +265,21 @@ export default function ANKRagDashboard() {
                         className={`flex-shrink-0 ${chat.activeSource === source.id ? "text-blue-500" : "text-gray-300"}`}
                       />
                     </div>
-                    <div className={`mt-0.5 truncate text-[11px] ${chat.activeSource === source.id ? "text-blue-500" : "text-gray-400"}`}>
-                      {source.meta}
+                    <div className="mt-0.5 flex items-center gap-1.5 text-[11px]">
+                      {source.label && (
+                        <span className="flex-shrink-0 rounded bg-gray-100 px-1 py-[1px] font-medium text-gray-600">
+                          {source.label}
+                        </span>
+                      )}
+                      <span className={`truncate ${chat.activeSource === source.id ? "text-blue-500" : "text-gray-400"}`}>
+                        {source.meta}
+                      </span>
                     </div>
+                    {source.quote && (
+                      <p className="mt-1 line-clamp-3 text-[11px] leading-snug text-gray-500">
+                        &ldquo;{source.quote}&rdquo;
+                      </p>
+                    )}
                   </a>
                 ))
               )}

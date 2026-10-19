@@ -1,4 +1,5 @@
-import { FolderKanban, Loader2, RefreshCw, UploadCloud } from "lucide-react";
+import { useState } from "react";
+import { FolderKanban, Loader2, RefreshCw, Share2, UploadCloud, X } from "lucide-react";
 import { formatDate } from "../lib/format";
 import { Panel, EmptyState } from "./common";
 
@@ -22,7 +23,24 @@ export function DocumentsPanel({
   uploadProgress,
   uploadMatterId,
   isUploading,
+  currentUserId,
+  shares,
+  isSharing,
+  loadShares,
+  shareDocument,
+  unshareDocument,
 }) {
+  // Which document's share editor is open, and the email being typed into it.
+  const [openShareFor, setOpenShareFor] = useState("");
+  const [shareEmail, setShareEmail] = useState("");
+
+  function toggleShare(fileId) {
+    const next = openShareFor === fileId ? "" : fileId;
+    setOpenShareFor(next);
+    setShareEmail("");
+    if (next && !shares[next]) loadShares(next);
+  }
+
   return (
     <Panel title="Documents" subtitle="Indexed files and ingestion controls.">
       <div className="mb-4 flex flex-wrap items-center gap-2">
@@ -121,23 +139,118 @@ export function DocumentsPanel({
             <EmptyState text="No indexed documents visible to this user." />
           ) : (
             <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
-              {documents.map((doc) => (
-                <div key={doc.file_id || doc.id} className="border-b border-gray-100 p-3 last:border-b-0">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="truncate text-sm font-medium text-gray-900">{doc.file_title || doc.file_id}</div>
-                      <div className="mt-1 text-xs text-gray-500">
-                        {doc.matter_id || "No matter"} - Level {doc.access_level || 1} - {formatDate(doc.ingested_at)}
+              {documents.map((doc) => {
+                const isMine = Boolean(
+                  currentUserId && doc.owner_user_id && doc.owner_user_id === currentUserId
+                );
+                const isPrivate = doc.doc_scope === "private";
+                const fileShares = shares[doc.file_id] || [];
+                const shareOpen = openShareFor === doc.file_id;
+                return (
+                  <div key={doc.file_id || doc.id} className="border-b border-gray-100 p-3 last:border-b-0">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="truncate text-sm font-medium text-gray-900">
+                            {doc.file_title || doc.file_id}
+                          </span>
+                          {isPrivate && (
+                            <span
+                              className="flex-shrink-0 rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700"
+                              title={
+                                isMine
+                                  ? "Only you can see this upload unless you share it."
+                                  : "Another account shared this upload with you."
+                              }
+                            >
+                              {isMine ? "Private" : "Shared with you"}
+                            </span>
+                          )}
+                          {isMine && fileShares.length > 0 && (
+                            <span className="flex-shrink-0 rounded bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-700">
+                              {fileShares.length} shared
+                            </span>
+                          )}
+                        </div>
+                        <div className="mt-1 text-xs text-gray-500">
+                          {doc.matter_id || "No matter"} - Level {doc.access_level || 1} - {formatDate(doc.ingested_at)}
+                        </div>
+                      </div>
+                      <div className="flex flex-shrink-0 items-center gap-2">
+                        {isMine && (
+                          <button
+                            onClick={() => toggleShare(doc.file_id)}
+                            className="flex items-center gap-1 rounded-md border border-gray-200 px-2 py-1 text-xs font-medium text-gray-600 hover:bg-gray-50"
+                            title="Share this private upload with a colleague"
+                          >
+                            <Share2 size={12} />
+                            Share
+                          </button>
+                        )}
+                        {doc.url && (
+                          <a href={doc.url} target="_blank" rel="noreferrer" className="text-xs font-medium text-blue-600 hover:text-blue-700">
+                            Open
+                          </a>
+                        )}
                       </div>
                     </div>
-                    {doc.url && (
-                      <a href={doc.url} target="_blank" rel="noreferrer" className="text-xs font-medium text-blue-600 hover:text-blue-700">
-                        Open
-                      </a>
+
+                    {shareOpen && (
+                      <div className="mt-2 rounded-md border border-gray-200 bg-gray-50 p-2">
+                        <form
+                          onSubmit={async (event) => {
+                            event.preventDefault();
+                            if (!shareEmail.trim()) return;
+                            const ok = await shareDocument(doc.file_id, shareEmail.trim());
+                            if (ok) setShareEmail("");
+                          }}
+                          className="flex items-center gap-2"
+                        >
+                          <input
+                            type="email"
+                            required
+                            value={shareEmail}
+                            onChange={(event) => setShareEmail(event.target.value)}
+                            placeholder="colleague@firm.co.ke"
+                            className="min-w-0 flex-1 rounded-md border border-gray-300 px-2 py-1 text-xs focus:border-blue-400 focus:outline-none"
+                          />
+                          <button
+                            disabled={isSharing}
+                            className="rounded-md bg-blue-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-gray-300"
+                          >
+                            {isSharing ? "Sharing" : "Share"}
+                          </button>
+                        </form>
+                        {fileShares.length > 0 && (
+                          <ul className="mt-2 space-y-1">
+                            {fileShares.map((share) => (
+                              <li
+                                key={share.shared_with}
+                                className="flex items-center justify-between gap-2 text-[11px] text-gray-600"
+                              >
+                                <span className="truncate">{share.email || share.shared_with}</span>
+                                <button
+                                  onClick={() => unshareDocument(doc.file_id, share.shared_with)}
+                                  disabled={isSharing}
+                                  className="flex items-center gap-0.5 text-gray-400 hover:text-red-600 disabled:opacity-50"
+                                  title="Revoke this share"
+                                >
+                                  <X size={11} />
+                                  Revoke
+                                </button>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                        <p className="mt-2 text-[10px] leading-snug text-gray-400">
+                          Only the person you name can open this upload. They must already have an
+                          access level and matter grant that covers it.
+                        </p>
+                      </div>
                     )}
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </section>
